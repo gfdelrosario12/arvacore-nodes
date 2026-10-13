@@ -77,8 +77,8 @@ The firmware contains:
    ```cpp
    const char* WIFI_SSID = "ARVACORE_GATEWAY";
    const char* WIFI_PASS = "arvacore2026";
-   const char* GATEWAY_URL = "http://192.168.1.100:8080/api/v1/telemetry/uplink/NODE-01";
-   const char* GATEWAY_KEY = "arvacore-gateway-sec-key-2026";
+   const char* BACKEND_URL = "https://api-aquaflow.gladwindr.me/api/v1/telemetry/uplink/NODE-01";
+   const char* GATEWAY_KEY = "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9";
    ```
 4. Compile and upload to your ESP32 board over USB.
 
