@@ -12,13 +12,15 @@
 
 The **ArvaNode** is an independent, battery-powered IoT field node responsible for real-time acquisition of field water depth and soil moisture under the Alternate Wetting and Drying (AWD) protocol.
 
-### Microcontroller & Sensors
+### Microcontroller, Sensors & Controls
 | Component | Function | Interface / Pin | Notes |
 |:---|:---|:---|:---|
 | **ESP32-WROOM-32** | Main controller & Wi-Fi uplink | — | 3.3V logic |
-| **JSN-SR04T** | Ultrasonic distance measurement | TRIG: `GPIO 5`<br>ECHO: `GPIO 18` | Waterproof sensor mounted atop still-well pipe |
-| **Capacitive Soil Moisture v1.2** | Root-zone volumetric water content | Analog In: `GPIO 34` | Corrosion-resistant analog probe |
-| **Voltage Divider** | Sensor echo 5V to 3.3V stepping | ECHO pin path | $1\,\text{k}\Omega$ / $2\,\text{k}\Omega$ divider for 3.3V ESP32 pin protection |
+| **JSN-SR04T / HC-SR04** | Ultrasonic distance measurement | TRIG: `GPIO 5`<br>ECHO: `GPIO 18` | Sensor mounted atop still-well pipe |
+| **Capacitive Soil Moisture v1.2** | Root-zone volumetric water content | Analog In: `GPIO 34` | Corrosion-resistant analog probe (ADC1_CH6) |
+| **Momentary Push Button 1** | Normal Monitoring & Telemetry Toggle | Input Pull-Up: `GPIO 19` | Active-LOW (Internal pull-up enabled) |
+| **Momentary Push Button 2** | Hardware Pairing Request Initiator | Input Pull-Up: `GPIO 23` | Active-LOW (Internal pull-up enabled) |
+| **Voltage Divider** | Echo 5V to 3.3V stepping | ECHO pin path | $1\,\text{k}\Omega$ / $2\,\text{k}\Omega$ divider for 3.3V ESP32 pin protection |
 
 ---
 
