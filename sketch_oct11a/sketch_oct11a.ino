@@ -229,6 +229,15 @@ void sendPairingRequest() {
     if (errResp.length() > 0) {
       Serial.printf("[PAIRING] Response: %s\n", errResp.c_str());
     }
+
+    if (httpCode == 401) {
+      Serial.println(F("[PAIRING_ERROR] 401 Unauthorized: Gateway key missing or backend needs updated security rules."));
+      Serial.println(F("[PAIRING_ERROR] Ensure ARVACORE_GATEWAY_INGEST_KEY matches GATEWAY_KEY on server."));
+    } else if (httpCode == 400 && errResp.indexOf("MASTER_OFF") >= 0) {
+      Serial.println(F("[PAIRING_ERROR] Master system is currently turned OFF. Turn ON Master System in ArvaNet dashboard first."));
+    } else if (httpCode == -1) {
+      Serial.println(F("[PAIRING_ERROR] Connection timeout or server unreachable. Check Wi-Fi & DNS."));
+    }
   }
   http.end();
 }
@@ -373,8 +382,25 @@ void setup() {
   isPairedAndApproved = prefs.getBool("paired", false);
   isMonitoringActive  = prefs.getBool("active", false);
 
+  // Set Wi-Fi to Station mode to initialize Wi-Fi hardware and MAC
+  WiFi.mode(WIFI_STA);
+
   // Stable device identity from factory hardware MAC
   macAddress = WiFi.macAddress();
+  if (macAddress.length() == 0 || macAddress == "00:00:00:00:00:00") {
+    // Fallback: derive MAC from ESP32 factory eFuse
+    uint64_t chipmac = ESP.getEfuseMac();
+    char macBuf[18];
+    snprintf(macBuf, sizeof(macBuf), "%02X:%02X:%02X:%02X:%02X:%02X",
+             (uint8_t)(chipmac >> 40) & 0xFF,
+             (uint8_t)(chipmac >> 32) & 0xFF,
+             (uint8_t)(chipmac >> 24) & 0xFF,
+             (uint8_t)(chipmac >> 16) & 0xFF,
+             (uint8_t)(chipmac >> 8) & 0xFF,
+             (uint8_t)chipmac & 0xFF);
+    macAddress = String(macBuf);
+  }
+
   String macSuffix = macAddress;
   macSuffix.replace(":", "");
   if (macSuffix.length() >= 4) {
