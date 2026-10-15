@@ -3,6 +3,8 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <Preferences.h>
+#include "esp_system.h"
+#include "esp_mac.h"
 
 // ============================================================
 // ARVACORE / ARVANODE - AWD FIELD SENSOR NODE FIRMWARE
@@ -28,7 +30,13 @@
 // ============================================================
 
 // -------------------- BACKEND CONFIGURATION -----------------
-const char* BACKEND_BASE_URL = "https://api-aquaflow.gladwindr.me/api/v1";
+// Remote deployed API (used when available)
+const char* REMOTE_BACKEND_URL = "https://api-aquaflow.gladwindr.me/api/v1";
+// Local gateway / development fallback API (e.g. laptop or local server IP on field Wi-Fi)
+const char* LOCAL_BACKEND_URL  = "http://192.168.1.88:8080/api/v1";
+
+// Active backend URL (defaults to remote, falls back to local on network failure)
+const char* BACKEND_BASE_URL = REMOTE_BACKEND_URL;
 
 // Gateway authentication key configured on the backend
 const char* GATEWAY_KEY = "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9";
@@ -235,8 +243,16 @@ void sendPairingRequest() {
       Serial.println(F("[PAIRING_ERROR] Ensure ARVACORE_GATEWAY_INGEST_KEY matches GATEWAY_KEY on server."));
     } else if (httpCode == 400 && errResp.indexOf("MASTER_OFF") >= 0) {
       Serial.println(F("[PAIRING_ERROR] Master system is currently turned OFF. Turn ON Master System in ArvaNet dashboard first."));
-    } else if (httpCode == -1) {
-      Serial.println(F("[PAIRING_ERROR] Connection timeout or server unreachable. Check Wi-Fi & DNS."));
+    } else if (httpCode <= 0) {
+      Serial.println(F("[PAIRING_ERROR] Connection timeout or server unreachable."));
+      // Automatic backend failover between remote and local
+      if (BACKEND_BASE_URL == REMOTE_BACKEND_URL) {
+        Serial.printf("[FAILOVER] Switching active backend from Remote to Local: %s\n", LOCAL_BACKEND_URL);
+        BACKEND_BASE_URL = LOCAL_BACKEND_URL;
+      } else {
+        Serial.printf("[FAILOVER] Switching active backend from Local to Remote: %s\n", REMOTE_BACKEND_URL);
+        BACKEND_BASE_URL = REMOTE_BACKEND_URL;
+      }
     }
   }
   http.end();
@@ -308,6 +324,15 @@ void sendTelemetry(float distanceCm, bool distanceValid, float soilMoisturePerce
     }
   } else {
     Serial.printf("[HTTP] POST failed, error: %s\n", http.errorToString(httpCode).c_str());
+    if (httpCode <= 0) {
+      if (BACKEND_BASE_URL == REMOTE_BACKEND_URL) {
+        Serial.printf("[FAILOVER] Switching telemetry backend to Local: %s\n", LOCAL_BACKEND_URL);
+        BACKEND_BASE_URL = LOCAL_BACKEND_URL;
+      } else {
+        Serial.printf("[FAILOVER] Switching telemetry backend to Remote: %s\n", REMOTE_BACKEND_URL);
+        BACKEND_BASE_URL = REMOTE_BACKEND_URL;
+      }
+    }
   }
   http.end();
 }
@@ -382,29 +407,30 @@ void setup() {
   isPairedAndApproved = prefs.getBool("paired", false);
   isMonitoringActive  = prefs.getBool("active", false);
 
-  // Set Wi-Fi to Station mode to initialize Wi-Fi hardware and MAC
-  WiFi.mode(WIFI_STA);
+  // Connect Wi-Fi first to ensure radio is ready and MAC is active
+  connectWiFi();
 
-  // Stable device identity from factory hardware MAC
-  macAddress = WiFi.macAddress();
-  if (macAddress.length() == 0 || macAddress == "00:00:00:00:00:00") {
-    // Fallback: derive MAC from ESP32 factory eFuse
-    uint64_t chipmac = ESP.getEfuseMac();
+  // Re-read hardware MAC once Wi-Fi hardware is active
+  uint8_t baseMac[6] = {0};
+  esp_err_t ret = esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
+  if (ret == ESP_OK && (baseMac[0] != 0 || baseMac[1] != 0 || baseMac[2] != 0)) {
     char macBuf[18];
     snprintf(macBuf, sizeof(macBuf), "%02X:%02X:%02X:%02X:%02X:%02X",
-             (uint8_t)(chipmac >> 40) & 0xFF,
-             (uint8_t)(chipmac >> 32) & 0xFF,
-             (uint8_t)(chipmac >> 24) & 0xFF,
-             (uint8_t)(chipmac >> 16) & 0xFF,
-             (uint8_t)(chipmac >> 8) & 0xFF,
-             (uint8_t)chipmac & 0xFF);
+             baseMac[0], baseMac[1], baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
     macAddress = String(macBuf);
+  } else {
+    String wifiMac = WiFi.macAddress();
+    if (wifiMac.length() > 0 && wifiMac != "00:00:00:00:00:00") {
+      macAddress = wifiMac;
+    }
   }
 
   String macSuffix = macAddress;
   macSuffix.replace(":", "");
-  if (macSuffix.length() >= 4) {
+  if (macSuffix.length() >= 4 && macSuffix != "000000000000") {
     nodeId = "NODE-" + macSuffix.substring(macSuffix.length() - 4);
+  } else {
+    nodeId = "NODE-01";
   }
 
   Serial.println();
@@ -423,7 +449,11 @@ void setup() {
   Serial.println(F("  Pairing Button:    GPIO 23"));
   Serial.println(F("========================================"));
 
-  connectWiFi();
+  // If node is currently unpaired, automatically send an initial pairing request on boot
+  if (!isPairedAndApproved && WiFi.status() == WL_CONNECTED) {
+    Serial.println(F("[BOOT] Node is unpaired. Automatically submitting pairing request to backend..."));
+    sendPairingRequest();
+  }
 }
 
 // ------------------------------------------------------------
