@@ -41,7 +41,8 @@ const char* WIFI_PASSWORD = "hatdog123";
 const char* BACKEND_BASE_URL =
     "https://api-aquaflow.gladwindr.me/api/v1";
 
-const char* GATEWAY_KEY = "YOUR_GATEWAY_KEY";
+const char* GATEWAY_KEY =
+    "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9";
 
 const char* PAIRING_STATUS_PATH = "/pairing/status/";
 
