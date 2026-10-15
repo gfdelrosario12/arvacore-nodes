@@ -1,4 +1,3 @@
-
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -11,26 +10,40 @@
 // ARVACORE / ARVANODE SENSOR NODE FIRMWARE
 // Board: ESP32 Dev Module / ESP32-WROOM-32
 //
-// GPIO 34 : Soil moisture AO
-// GPIO 5  : Ultrasonic TRIG
-// GPIO 18 : Ultrasonic ECHO
-// GPIO 19 : Activation button, active LOW
-// GPIO 23 : Pairing button, active LOW
-// GPIO 25 : Green pairing/status LED
-// GPIO 26 : Blue monitoring LED
+// HARDWARE CONNECTIONS:
+//   GPIO 34 : Soil moisture AO (Capacitive/Analog)
+//   GPIO 5  : Ultrasonic TRIG
+//   GPIO 18 : Ultrasonic ECHO (via voltage divider)
+//   GPIO 19 : Activation button (Active LOW, internal pull-up)
+//   GPIO 23 : Pairing button (Active LOW, internal pull-up)
+//   GPIO 26 : LED 1 - Activation & Monitoring LED (Blue)
+//   GPIO 25 : LED 2 - Pairing & Status LED (Green)
 //
-// OPERATION
-// - Monitoring starts OFF after reboot.
-// - Pairing button submits a pairing request.
-// - Activation requires backend approval and runs a hardware audit.
-// - Every 30 seconds, backend pairing status is verified.
-// - Telemetry is sent only after backend confirms APPROVED.
-// - Unknown state, HTTP failure, or connection failure blocks telemetry.
-// - PENDING, REJECTED, or REVOKED stops monitoring.
-// - Switching activation OFF stops periodic monitoring.
-//
-// SECURITY NOTE
-// WiFiClientSecure::setInsecure() disables TLS certificate validation.
+// OPERATIONAL SPECIFICATION:
+// 1. Standby / Power State:
+//    - On boot, device starts in STANDBY / POWERED-OFF mode.
+//    - The Pairing button is DISABLED until the Activation button is pressed.
+// 2. Activation Button (GPIO 19):
+//    - Powers on the device and enables the Pairing button.
+//    - Queries the backend to verify if pairing is valid and not expired.
+//    - If pairing is expired, invalid, or not approved:
+//        -> Signals ERROR on LED 1 (3 blinks). Monitoring remains OFF.
+//    - If pairing is valid & approved:
+//        -> Executes comprehensive hardware audit (Wi-Fi, Soil ADC, Ultrasonic).
+//        -> If all components PASS:
+//             -> Signals SUCCESS on LED 1 (1 blink), then turns LED 1 solid ON.
+//             -> Activates monitoring: gathers and transmits telemetry after 15 minutes.
+//        -> If any component FAILS:
+//             -> Signals ERROR on LED 1 (3 blinks). Monitoring remains OFF.
+// 3. Pairing Button (GPIO 23):
+//    - Only active if device has been powered on by the Activation button.
+//    - Sends a pairing request to the ArvaCore backend API.
+//    - On successful backend approval:
+//        -> Signals SUCCESS on LED 2 (1 blink), then turns LED 2 solid ON.
+//    - On error, rejection, pending, or connection failure:
+//        -> Signals ERROR on LED 2 (3 blinks), turns LED 2 OFF.
+// 4. Telemetry Cycle:
+//    - Periodic telemetry acquisition every 15 minutes (900,000 ms).
 // ============================================================
 
 // ---------------- NETWORK CONFIGURATION ----------------------
@@ -46,7 +59,7 @@ const char* GATEWAY_KEY =
 
 const char* PAIRING_STATUS_PATH = "/pairing/status/";
 
-// ---------------- GPIO ---------------------------------------
+// ---------------- GPIO PIN DEFINITIONS -----------------------
 
 constexpr uint8_t SOIL_PIN = 34;
 constexpr uint8_t TRIG_PIN = 5;
@@ -55,15 +68,16 @@ constexpr uint8_t ECHO_PIN = 18;
 constexpr uint8_t BTN_ACTIVATE = 19;
 constexpr uint8_t BTN_PAIRING = 23;
 
-constexpr uint8_t LED_PAIRING = 25;
-constexpr uint8_t LED_DATA = 26;
+constexpr uint8_t LED_PAIRING = 25;    // LED 2: Pairing responses
+constexpr uint8_t LED_ACTIVATE = 26;   // LED 1: Activation errors & monitoring
+constexpr uint8_t LED_DATA = LED_ACTIVATE;
 
-// ---------------- TIMING -------------------------------------
+// ---------------- TIMING CONFIGURATION -----------------------
 
 constexpr unsigned long DEBOUNCE_MS = 50;
 constexpr unsigned long WIFI_TIMEOUT_MS = 10000;
 constexpr unsigned long HTTP_TIMEOUT_MS = 10000;
-constexpr unsigned long TELEMETRY_INTERVAL_MS = 30000;
+constexpr unsigned long TELEMETRY_INTERVAL_MS = 15UL * 60UL * 1000UL; // 15 minutes
 
 // ---------------- SENSOR CONFIGURATION -----------------------
 
@@ -81,7 +95,7 @@ constexpr int SOIL_WATER_VALUE = 1500;
 
 constexpr float SENSOR_DATUM_OFFSET_CM = 20.0f;
 
-// ---------------- PAIRING STATES -----------------------------
+// ---------------- STATE VARIABLES ----------------------------
 
 enum PairingState {
     PAIRING_UNVERIFIED,
@@ -97,8 +111,9 @@ String macAddress;
 
 PairingState pairingState = PAIRING_UNVERIFIED;
 
-bool isPairedAndApproved = false;
-bool isMonitoringActive = false;
+bool isDevicePoweredOn = false;     // Set TRUE once Activation button is pressed
+bool isPairedAndApproved = false;   // Backend confirmed approved pairing
+bool isMonitoringActive = false;    // 15-minute telemetry monitoring is active
 
 unsigned long lastTransmissionTime = 0;
 unsigned long telemetrySequence = 0;
@@ -123,7 +138,29 @@ int pairingStableState = HIGH;
 unsigned long pairingDebounceAt = 0;
 
 // ============================================================
-// SERIAL LOGGING
+// FORWARD DECLARATIONS
+// ============================================================
+
+void printSection(const char* title);
+void info(const String& message);
+void success(const String& message);
+void warning(const String& message);
+void errorLog(const String& message);
+void action(const String& message);
+
+void updateLeds();
+void flashActivationLed(uint8_t count);
+void flashPairingLed(uint8_t count);
+
+bool connectWiFi();
+bool verifyBackendPairingStatus();
+bool runActivationAudit();
+void requestPairing();
+bool sendTelemetry(float soilPercent, float distanceCm, bool distanceValid);
+void runMonitoringCycle();
+
+// ============================================================
+// SERIAL LOGGING HELPERS
 // ============================================================
 
 void printSection(const char* title) {
@@ -159,36 +196,59 @@ void action(const String& message) {
     Serial.println(message);
 }
 
-// ============================================================
-// PAIRING STATE
-// ============================================================
-
 const char* pairingStateName(PairingState state) {
     switch (state) {
         case PAIRING_PENDING:
             return "PENDING";
-
         case PAIRING_APPROVED:
             return "APPROVED";
-
         case PAIRING_REJECTED:
             return "REJECTED";
-
         default:
             return "UNVERIFIED";
     }
 }
 
+// ============================================================
+// LED CONTROL & BLINK FEEDBACK
+// LED 1 (GPIO 26): Activation feedback (1 = Success, 3 = Error)
+// LED 2 (GPIO 25): Pairing feedback (1 = Success, 3 = Error)
+// ============================================================
+
 void updateLeds() {
+    // LED 2: Solid ON if paired and approved
     digitalWrite(
         LED_PAIRING,
         isPairedAndApproved ? HIGH : LOW
     );
 
+    // LED 1: Solid ON if monitoring is active
     digitalWrite(
-        LED_DATA,
+        LED_ACTIVATE,
         isMonitoringActive ? HIGH : LOW
     );
+}
+
+void flashActivationLed(uint8_t count) {
+    Serial.printf("[LED 1] Flashing %d time(s) on GPIO %d\n", count, LED_ACTIVATE);
+    for (uint8_t i = 0; i < count; i++) {
+        digitalWrite(LED_ACTIVATE, HIGH);
+        delay(250);
+        digitalWrite(LED_ACTIVATE, LOW);
+        delay(250);
+    }
+    updateLeds();
+}
+
+void flashPairingLed(uint8_t count) {
+    Serial.printf("[LED 2] Flashing %d time(s) on GPIO %d\n", count, LED_PAIRING);
+    for (uint8_t i = 0; i < count; i++) {
+        digitalWrite(LED_PAIRING, HIGH);
+        delay(250);
+        digitalWrite(LED_PAIRING, LOW);
+        delay(250);
+    }
+    updateLeds();
 }
 
 void applyPairingState(PairingState newState) {
@@ -205,18 +265,14 @@ void applyPairingState(PairingState newState) {
         case PAIRING_REJECTED:
             isPairedAndApproved = false;
             prefs.putBool("paired", false);
-
             isMonitoringActive = false;
             prefs.putBool("active", false);
-
             digitalWrite(LED_PAIRING, LOW);
-            digitalWrite(LED_DATA, LOW);
+            digitalWrite(LED_ACTIVATE, LOW);
             break;
 
         case PAIRING_UNVERIFIED:
         default:
-            // Cached approval may be retained for diagnostics, but it
-            // is not authorization to send telemetry.
             digitalWrite(
                 LED_PAIRING,
                 isPairedAndApproved ? HIGH : LOW
@@ -225,13 +281,13 @@ void applyPairingState(PairingState newState) {
     }
 
     Serial.printf(
-        "[PAIRING] Current state: %s\n",
+        "[PAIRING] State updated: %s\n",
         pairingStateName(pairingState)
     );
 }
 
 // ============================================================
-// WIFI
+// WI-FI CONNECTIVITY
 // ============================================================
 
 bool connectWiFi() {
@@ -251,35 +307,22 @@ bool connectWiFi() {
         millis() - start < WIFI_TIMEOUT_MS
     ) {
         delay(250);
+        Serial.print(F("."));
     }
 
-    if (WiFi.status() != WL_CONNECTED) {
-        errorLog(
-            "Wi-Fi connection failed within the configured timeout."
-        );
+    Serial.println();
 
-        info(
-            "Check SSID, password, router availability, and 2.4 GHz support."
-        );
-
-        return false;
+    if (WiFi.status() == WL_CONNECTED) {
+        success(String("Wi-Fi connected. Local IP: ") + WiFi.localIP().toString());
+        return true;
     }
 
-    Serial.printf(
-        "[WIFI] Connected. IP address: %s\n",
-        WiFi.localIP().toString().c_str()
-    );
-
-    Serial.printf(
-        "[WIFI] Signal strength: %d dBm\n",
-        WiFi.RSSI()
-    );
-
-    return true;
+    errorLog("Failed to establish Wi-Fi connection within timeout.");
+    return false;
 }
 
 // ============================================================
-// HTTPS CLIENT
+// SECURE HTTP INITIALIZATION
 // ============================================================
 
 bool beginSecureHttp(
@@ -288,19 +331,15 @@ bool beginSecureHttp(
     const String& url
 ) {
     if (!connectWiFi()) {
+        errorLog("HTTPS request aborted: Wi-Fi disconnected.");
         return false;
     }
 
-    // Certificate verification is intentionally disabled.
-    // Do not use this configuration for security-sensitive production use.
     client.setInsecure();
     client.setTimeout(HTTP_TIMEOUT_MS);
 
     if (!http.begin(client, url)) {
-        errorLog(
-            String("Could not initialize HTTPS request to ") + url
-        );
-
+        errorLog(String("Could not initialize HTTPS request to ") + url);
         return false;
     }
 
@@ -312,8 +351,6 @@ bool beginSecureHttp(
 
 // ============================================================
 // JSON STRING FIELD EXTRACTION
-// Handles simple, unescaped JSON string fields.
-// For arbitrary JSON, use ArduinoJson.
 // ============================================================
 
 bool extractJsonString(
@@ -322,7 +359,6 @@ bool extractJsonString(
     String& output
 ) {
     String searchKey = String("\"") + key + "\"";
-
     int keyPos = body.indexOf(searchKey);
 
     if (keyPos < 0) {
@@ -330,64 +366,124 @@ bool extractJsonString(
     }
 
     int colonPos = body.indexOf(':', keyPos + searchKey.length());
-
     if (colonPos < 0) {
         return false;
     }
 
     int firstQuote = body.indexOf('"', colonPos + 1);
-
     if (firstQuote < 0) {
         return false;
     }
 
     int secondQuote = body.indexOf('"', firstQuote + 1);
-
     if (secondQuote < 0) {
         return false;
     }
 
     output = body.substring(firstQuote + 1, secondQuote);
-    output.trim();
-
     return true;
 }
 
 // ============================================================
-// AUTHORITATIVE BACKEND PAIRING STATUS
-//
-// Required endpoint:
-// GET /api/v1/pairing/status/{nodeId}
-//
-// Expected JSON:
-// {"nodeId":"NODE-A1B2","pairingStatus":"APPROVED"}
-//
-// Recognized statuses:
-// APPROVED, PENDING, REJECTED, REVOKED
-//
-// Any error or unknown response blocks telemetry.
+// SENSOR ACQUISITION HELPERS
+// ============================================================
+
+int readSoilADC() {
+    long total = 0;
+    int validSamples = 0;
+
+    for (uint8_t i = 0; i < SOIL_SAMPLES; i++) {
+        int val = analogRead(SOIL_PIN);
+        total += val;
+        validSamples++;
+        delay(15);
+    }
+
+    if (validSamples == 0) {
+        return -1;
+    }
+
+    return (int)(total / validSamples);
+}
+
+float soilPercentFromADC(int adcValue) {
+    if (adcValue <= 0) {
+        return 0.0f;
+    }
+
+    float percentage =
+        (float)(SOIL_AIR_VALUE - adcValue) * 100.0f /
+        (float)(SOIL_AIR_VALUE - SOIL_WATER_VALUE);
+
+    if (percentage < 0.0f) percentage = 0.0f;
+    if (percentage > 100.0f) percentage = 100.0f;
+
+    return percentage;
+}
+
+bool measureUltrasonicSingle(float& distanceCm) {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(4);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+
+    unsigned long duration = pulseIn(
+        ECHO_PIN,
+        HIGH,
+        ECHO_TIMEOUT_US
+    );
+
+    if (duration == 0) {
+        return false;
+    }
+
+    float calculated = (duration * SOUND_SPEED_CM_PER_US) / 2.0f;
+
+    if (calculated < MIN_DISTANCE_CM || calculated > MAX_DISTANCE_CM) {
+        return false;
+    }
+
+    distanceCm = calculated;
+    return true;
+}
+
+bool readUltrasonicAverage(float& result) {
+    float total = 0.0f;
+    uint8_t valid = 0;
+
+    for (uint8_t i = 0; i < ULTRASONIC_SAMPLES; i++) {
+        float sample = 0.0f;
+        if (measureUltrasonicSingle(sample)) {
+            total += sample;
+            valid++;
+        }
+        delay(25);
+    }
+
+    if (valid == 0) {
+        errorLog("No valid ultrasonic echo received (timeout or out of range).");
+        return false;
+    }
+
+    result = total / valid;
+    Serial.printf("[ULTRASONIC] Filtered average: %.2f cm\n", result);
+    return true;
+}
+
+// ============================================================
+// BACKEND PAIRING STATUS VERIFICATION
+// Queries GET /api/v1/pairing/status/{nodeId}
+// Returns TRUE only if backend status is APPROVED.
 // ============================================================
 
 bool verifyBackendPairingStatus() {
-    printSection("AUTHORITATIVE BACKEND PAIRING CHECK");
-
     statusChecks++;
 
-    Serial.printf(
-        "[PAIRING CHECK] Check number: %lu\n",
-        statusChecks
-    );
+    printSection("BACKEND PAIRING STATUS CHECK");
+    Serial.printf("[PAIRING CHECK] Querying status for Node: %s\n", nodeId.c_str());
 
-    Serial.printf(
-        "[PAIRING CHECK] Node ID: %s\n",
-        nodeId.c_str()
-    );
-
-    String url =
-        String(BACKEND_BASE_URL) +
-        PAIRING_STATUS_PATH +
-        nodeId;
-
+    String url = String(BACKEND_BASE_URL) + PAIRING_STATUS_PATH + nodeId;
     Serial.printf("[PAIRING CHECK] GET %s\n", url.c_str());
 
     WiFiClientSecure client;
@@ -395,67 +491,38 @@ bool verifyBackendPairingStatus() {
 
     if (!beginSecureHttp(http, client, url)) {
         applyPairingState(PAIRING_UNVERIFIED);
-
-        errorLog(
-            "Cannot verify pairing status. Telemetry is blocked."
-        );
-
+        errorLog("Cannot verify pairing status: secure HTTP init failed.");
         return false;
     }
 
     http.addHeader("Accept", "application/json");
 
     int httpCode = http.GET();
-
-    String response;
-    String transportError;
-
-    if (httpCode > 0) {
-        response = http.getString();
-    } else {
-        transportError = http.errorToString(httpCode);
-    }
+    String response = httpCode > 0 ? http.getString() : "";
+    String transportError = httpCode < 0 ? http.errorToString(httpCode) : "";
 
     http.end();
 
-    Serial.printf(
-        "[PAIRING CHECK] HTTP status: %d\n",
-        httpCode
-    );
+    Serial.printf("[PAIRING CHECK] HTTP response code: %d\n", httpCode);
 
     if (response.length() > 0) {
-        Serial.printf(
-            "[PAIRING CHECK] Response: %s\n",
-            response.c_str()
-        );
+        Serial.printf("[PAIRING CHECK] Response body: %s\n", response.c_str());
     }
 
     if (httpCode < 0) {
-        errorLog(
-            String("Pairing status transport failure: ") +
-            transportError
-        );
-
+        errorLog(String("Transport failure during status check: ") + transportError);
         applyPairingState(PAIRING_UNVERIFIED);
         return false;
     }
 
     if (httpCode == 404) {
-        errorLog(
-            "HTTP 404: pairing-status endpoint or node was not found. "
-            "Confirm that the backend route is implemented."
-        );
-
+        errorLog("HTTP 404: Node is not found in registry. Pairing is EXPIRED or UNREGISTERED.");
         applyPairingState(PAIRING_UNVERIFIED);
         return false;
     }
 
     if (httpCode < 200 || httpCode >= 300) {
-        errorLog(
-            String("Pairing status endpoint returned HTTP ") +
-            String(httpCode) + "."
-        );
-
+        errorLog(String("Pairing status check returned HTTP error ") + String(httpCode));
         applyPairingState(PAIRING_UNVERIFIED);
         return false;
     }
@@ -467,10 +534,7 @@ bool verifyBackendPairingStatus() {
         !extractJsonString(response, "nodeId", responseNodeId) ||
         !extractJsonString(response, "pairingStatus", status)
     ) {
-        errorLog(
-            "Pairing status response is missing nodeId or pairingStatus."
-        );
-
+        errorLog("Response missing 'nodeId' or 'pairingStatus'.");
         applyPairingState(PAIRING_UNVERIFIED);
         return false;
     }
@@ -480,249 +544,90 @@ bool verifyBackendPairingStatus() {
     status.toUpperCase();
 
     if (responseNodeId != nodeId) {
-        errorLog(
-            "Backend returned a different node ID. Authorization denied."
-        );
-
+        errorLog("Mismatched node ID in response. Authorization denied.");
         applyPairingState(PAIRING_UNVERIFIED);
         return false;
     }
 
     if (status == "APPROVED") {
         applyPairingState(PAIRING_APPROVED);
-
-        success(
-            "Backend confirms that this node is currently APPROVED."
-        );
-
+        success("Backend confirms this node is APPROVED.");
         return true;
     }
 
     if (status == "PENDING") {
-        warning(
-            "Backend reports PENDING. Monitoring and telemetry are stopped."
-        );
-
+        warning("Backend reports pairing is PENDING administrator approval.");
         applyPairingState(PAIRING_PENDING);
         return false;
     }
 
     if (status == "REJECTED" || status == "REVOKED") {
-        warning(
-            "Backend reports REJECTED or REVOKED. Monitoring and telemetry "
-            "are stopped."
-        );
-
+        warning("Backend reports pairing is REJECTED or REVOKED.");
         applyPairingState(PAIRING_REJECTED);
         return false;
     }
 
-    errorLog(
-        String("Unrecognized pairingStatus value: ") + status
-    );
-
+    errorLog(String("Unrecognized pairing status value: ") + status);
     applyPairingState(PAIRING_UNVERIFIED);
     return false;
 }
 
 // ============================================================
-// LED FEEDBACK
+// HARDWARE AUDIT CHECKS
+// Tests Wi-Fi, Soil Sensor ADC bounds, and Ultrasonic sensor.
+// Returns TRUE only if all components pass.
 // ============================================================
 
-void flashPairingLed(uint8_t count) {
-    for (uint8_t i = 0; i < count; i++) {
-        digitalWrite(LED_PAIRING, LOW);
-        delay(180);
-
-        digitalWrite(LED_PAIRING, HIGH);
-        delay(220);
-    }
-
-    updateLeds();
-}
-
-// ============================================================
-// SOIL MOISTURE SENSOR
-// ============================================================
-
-int readSoilADC() {
-    uint32_t total = 0;
-    int minimum = 4095;
-    int maximum = 0;
-
-    for (uint8_t i = 0; i < SOIL_SAMPLES; i++) {
-        int reading = analogRead(SOIL_PIN);
-
-        total += reading;
-
-        if (reading < minimum) minimum = reading;
-        if (reading > maximum) maximum = reading;
-
-        delay(10);
-    }
-
-    int average = total / SOIL_SAMPLES;
-
-    Serial.printf(
-        "[SOIL] ADC average: %d; minimum: %d; maximum: %d\n",
-        average,
-        minimum,
-        maximum
-    );
-
-    if (average <= 0 || average >= 4095) {
-        warning(
-            "Soil ADC is at a measurement boundary. Inspect sensor wiring."
-        );
-    }
-
-    return average;
-}
-
-float soilPercentFromADC(int raw) {
-    float denominator =
-        (float)(SOIL_AIR_VALUE - SOIL_WATER_VALUE);
-
-    if (denominator == 0.0f) {
-        errorLog("Soil calibration values are invalid.");
-        return 0.0f;
-    }
-
-    float percent =
-        ((float)(SOIL_AIR_VALUE - raw) / denominator) * 100.0f;
-
-    percent = constrain(percent, 0.0f, 100.0f);
-
-    Serial.printf(
-        "[SOIL] Calculated moisture: %.2f%%\n",
-        percent
-    );
-
-    return percent;
-}
-
-// ============================================================
-// ULTRASONIC SENSOR
-// ============================================================
-
-float readUltrasonicSingleCM() {
-    digitalWrite(TRIG_PIN, LOW);
-    delayMicroseconds(3);
-
-    digitalWrite(TRIG_PIN, HIGH);
-    delayMicroseconds(10);
-
-    digitalWrite(TRIG_PIN, LOW);
-
-    unsigned long duration = pulseIn(
-        ECHO_PIN,
-        HIGH,
-        ECHO_TIMEOUT_US
-    );
-
-    if (duration == 0) {
-        return -1.0f;
-    }
-
-    return duration * SOUND_SPEED_CM_PER_US / 2.0f;
-}
-
-bool readUltrasonicAverage(float& result) {
-    float total = 0.0f;
-    uint8_t valid = 0;
-
-    for (uint8_t i = 0; i < ULTRASONIC_SAMPLES; i++) {
-        float cm = readUltrasonicSingleCM();
-
-        if (cm >= MIN_DISTANCE_CM && cm <= MAX_DISTANCE_CM) {
-            Serial.printf(
-                "[ULTRASONIC] Sample %u: %.2f cm\n",
-                i + 1,
-                cm
-            );
-
-            total += cm;
-            valid++;
-        } else {
-            Serial.printf(
-                "[ULTRASONIC] Sample %u invalid or timed out.\n",
-                i + 1
-            );
-        }
-
-        delay(40);
-    }
-
-    if (valid == 0) {
-        errorLog("No valid ultrasonic readings were obtained.");
-        return false;
-    }
-
-    result = total / valid;
-
-    Serial.printf(
-        "[ULTRASONIC] Average distance: %.2f cm\n",
-        result
-    );
-
-    return true;
-}
-
-// ============================================================
-// ACTIVATION HARDWARE AUDIT
-// ============================================================
-
-void runActivationAudit() {
+bool runActivationAudit() {
     auditCount++;
 
-    printSection("ACTIVATION HARDWARE AUDIT");
+    printSection("HARDWARE AUDIT CHECK");
 
-    Serial.printf("[AUDIT] Audit number: %lu\n", auditCount);
-    Serial.printf("[AUDIT] Node ID: %s\n", nodeId.c_str());
-    Serial.printf("[AUDIT] MAC address: %s\n", macAddress.c_str());
+    Serial.printf("[AUDIT #%lu] Target Node: %s (MAC: %s)\n", auditCount, nodeId.c_str(), macAddress.c_str());
 
-    info("Checking Wi-Fi connectivity.");
-
+    // 1. Wi-Fi check
+    info("1. Testing Wi-Fi connectivity...");
     bool wifiOk = connectWiFi();
+    Serial.printf("[AUDIT] Wi-Fi link: %s\n", wifiOk ? "PASS (Connected)" : "FAIL (Disconnected)");
 
-    Serial.printf(
-        "[AUDIT] Wi-Fi: %s\n",
-        wifiOk ? "CONNECTED" : "DISCONNECTED"
-    );
-
-    info("Testing soil moisture sensor.");
-
+    // 2. Soil moisture sensor check
+    info("2. Testing soil moisture sensor (GPIO 34)...");
     int rawSoil = readSoilADC();
-    float soil = soilPercentFromADC(rawSoil);
-
-    info("Testing ultrasonic sensor.");
-
-    float distance = 0.0f;
-    bool distanceOk = readUltrasonicAverage(distance);
-
-    printSection("HARDWARE AUDIT SUMMARY");
-
-    Serial.printf("[AUDIT] Soil moisture: %.2f%%\n", soil);
-
-    if (distanceOk) {
-        Serial.printf(
-            "[AUDIT] Ultrasonic distance: %.2f cm\n",
-            distance
-        );
-    } else {
-        warning("Ultrasonic sensor did not return a valid distance.");
-    }
-
+    // Valid analog reading on ESP32 12-bit ADC is within realistic range
+    bool soilOk = (rawSoil >= 50 && rawSoil <= 4090);
+    float soilPercent = soilPercentFromADC(rawSoil);
     Serial.printf(
-        "[AUDIT] Wi-Fi: %s\n",
-        wifiOk ? "PASS" : "FAIL"
+        "[AUDIT] Soil Sensor ADC: %d (%.2f%%) | Result: %s\n",
+        rawSoil,
+        soilPercent,
+        soilOk ? "PASS" : "FAIL (Sensor reading out of expected bounds)"
     );
 
-    success("Hardware audit routine completed.");
+    // 3. Ultrasonic distance sensor check
+    info("3. Testing ultrasonic distance sensor (TRIG: 5, ECHO: 18)...");
+    float distanceCm = 0.0f;
+    bool distanceOk = readUltrasonicAverage(distanceCm);
+    Serial.printf(
+        "[AUDIT] Ultrasonic Sensor: %.2f cm | Result: %s\n",
+        distanceCm,
+        distanceOk ? "PASS" : "FAIL (Echo timeout or out of range)"
+    );
+
+    bool allGood = wifiOk && soilOk && distanceOk;
+
+    printSection("AUDIT SUMMARY");
+    Serial.printf("[AUDIT SUMMARY] Wi-Fi:             %s\n", wifiOk ? "PASS" : "FAIL");
+    Serial.printf("[AUDIT SUMMARY] Soil Sensor:       %s\n", soilOk ? "PASS" : "FAIL");
+    Serial.printf("[AUDIT SUMMARY] Ultrasonic Sensor: %s\n", distanceOk ? "PASS" : "FAIL");
+    Serial.printf("[AUDIT SUMMARY] OVERALL:           %s\n", allGood ? "PASS (All components operational)" : "FAIL (Hardware error)");
+
+    return allGood;
 }
 
 // ============================================================
-// PAIRING REQUEST
+// PAIRING REQUEST (GPIO 23)
+// Transmits pairing request to POST /api/v1/pairing/request
+// LED 2 feedback: 1 blink for success, 3 blinks for error
 // ============================================================
 
 void requestPairing() {
@@ -730,21 +635,20 @@ void requestPairing() {
 
     if (!connectWiFi()) {
         pairingFailures++;
-        errorLog("Pairing request cancelled: Wi-Fi is unavailable.");
-        flashPairingLed(3);
+        errorLog("Pairing request aborted: Wi-Fi unavailable.");
+        flashPairingLed(3); // 3 for error
         return;
     }
 
     WiFiClientSecure client;
     HTTPClient http;
 
-    String url =
-        String(BACKEND_BASE_URL) + "/pairing/request";
+    String url = String(BACKEND_BASE_URL) + "/pairing/request";
 
     if (!beginSecureHttp(http, client, url)) {
         pairingFailures++;
-        errorLog("Pairing request blocked: HTTPS initialization failed.");
-        flashPairingLed(3);
+        errorLog("Pairing request aborted: HTTPS initialization failed.");
+        flashPairingLed(3); // 3 for error
         return;
     }
 
@@ -755,34 +659,33 @@ void requestPairing() {
     payload += "\"nodeId\":\"" + nodeId + "\",";
     payload += "\"macAddress\":\"" + macAddress + "\",";
     payload += "\"hardwareModel\":\"ESP32-WROOM-32\",";
-    payload += "\"firmwareVersion\":\"3.1.0\"";
+    payload += "\"firmwareVersion\":\"2.0.0\"";
     payload += "}";
-
-    pairingAttempts++;
 
     Serial.printf("[PAIRING] POST %s\n", url.c_str());
     Serial.printf("[PAIRING] Payload: %s\n", payload.c_str());
 
+    pairingAttempts++;
+
     int httpCode = http.POST(payload);
     String response = httpCode > 0 ? http.getString() : "";
+    String transportError = httpCode < 0 ? http.errorToString(httpCode) : "";
 
     http.end();
 
-    Serial.printf("[PAIRING] HTTP status: %d\n", httpCode);
+    Serial.printf("[PAIRING] HTTP response code: %d\n", httpCode);
 
-    if (response.length()) {
+    if (response.length() > 0) {
         Serial.printf("[PAIRING] Response: %s\n", response.c_str());
     }
 
     if (httpCode < 200 || httpCode >= 300) {
         pairingFailures++;
-
-        errorLog(
-            String("Pairing request failed with HTTP status ") +
-            String(httpCode) + "."
-        );
-
-        flashPairingLed(3);
+        errorLog(String("Pairing request failed with HTTP ") + String(httpCode));
+        if (httpCode < 0) {
+            errorLog(String("Transport error: ") + transportError);
+        }
+        flashPairingLed(3); // 3 for error
         return;
     }
 
@@ -794,13 +697,9 @@ void requestPairing() {
         !extractJsonString(response, "pairingStatus", status)
     ) {
         pairingFailures++;
-
-        errorLog(
-            "Pairing response is missing nodeId or pairingStatus."
-        );
-
+        errorLog("Pairing response is missing required fields.");
         applyPairingState(PAIRING_UNVERIFIED);
-        flashPairingLed(3);
+        flashPairingLed(3); // 3 for error
         return;
     }
 
@@ -808,63 +707,45 @@ void requestPairing() {
 
     if (returnedNode != nodeId) {
         pairingFailures++;
-
-        errorLog("Pairing response node ID does not match this device.");
-
+        errorLog("Pairing response node ID mismatch.");
         applyPairingState(PAIRING_UNVERIFIED);
-        flashPairingLed(3);
+        flashPairingLed(3); // 3 for error
         return;
     }
 
     if (status == "APPROVED") {
         pairingSuccesses++;
-
         applyPairingState(PAIRING_APPROVED);
-
-        success("Backend approved the node.");
-
-        info(
-            "Monitoring remains OFF. Press activation to run the hardware audit."
-        );
-
-        flashPairingLed(1);
+        success("Node pairing APPROVED by backend!");
+        info("Press Activation Button (GPIO 19) to run hardware audit and activate monitoring.");
+        flashPairingLed(1); // 1 for successful
         return;
     }
 
     if (status == "PENDING") {
         applyPairingState(PAIRING_PENDING);
-
-        warning(
-            "Pairing is pending. Wait for backend approval."
-        );
-
+        warning("Pairing request is PENDING approval in the ArvaCore dashboard.");
+        flashPairingLed(3); // 3 for error / pending
         return;
     }
 
     if (status == "REJECTED" || status == "REVOKED") {
         pairingFailures++;
-
         applyPairingState(PAIRING_REJECTED);
-
-        errorLog("Backend did not approve this node.");
-
-        flashPairingLed(3);
+        errorLog("Backend REJECTED the pairing request.");
+        flashPairingLed(3); // 3 for error
         return;
     }
 
     pairingFailures++;
-
     applyPairingState(PAIRING_UNVERIFIED);
-
-    errorLog(
-        String("Unrecognized pairing status: ") + status
-    );
-
-    flashPairingLed(3);
+    errorLog(String("Unrecognized pairing status: ") + status);
+    flashPairingLed(3); // 3 for error
 }
 
 // ============================================================
-// TELEMETRY TRANSMISSION
+// TELEMETRY TRANSMISSION (15-MINUTE CYCLE)
+// Transmits to POST /api/v1/telemetry/uplink/{nodeId}
 // ============================================================
 
 bool sendTelemetry(
@@ -872,43 +753,21 @@ bool sendTelemetry(
     float distanceCm,
     bool distanceValid
 ) {
-    printSection("BACKEND TELEMETRY TRANSMISSION");
+    printSection("TELEMETRY TRANSMISSION");
 
     if (!isMonitoringActive) {
-        warning("Telemetry blocked: monitoring is OFF.");
-        return false;
-    }
-
-    // Authoritative backend verification before sending.
-    if (!verifyBackendPairingStatus()) {
-        errorLog(
-            "Telemetry blocked because current backend approval "
-            "could not be confirmed."
-        );
-
-        return false;
-    }
-
-    if (!isMonitoringActive) {
-        warning("Monitoring stopped during the status check.");
+        warning("Telemetry blocked: monitoring is inactive.");
         return false;
     }
 
     WiFiClientSecure client;
     HTTPClient http;
 
-    String url =
-        String(BACKEND_BASE_URL) +
-        "/telemetry/uplink/" +
-        nodeId;
+    String url = String(BACKEND_BASE_URL) + "/telemetry/uplink/" + nodeId;
 
     if (!beginSecureHttp(http, client, url)) {
         telemetryFailures++;
-
-        errorLog(
-            "Telemetry blocked because the HTTPS request could not start."
-        );
-
+        errorLog("Telemetry failed: could not initialize secure HTTP.");
         return false;
     }
 
@@ -918,36 +777,28 @@ bool sendTelemetry(
     telemetrySequence++;
     telemetryAttempts++;
 
-    // These battery readings are placeholders, not real measurements.
     String payload = "{";
-
     payload += "\"nodeId\":\"" + nodeId + "\",";
     payload += "\"seq\":" + String(telemetrySequence) + ",";
     payload += "\"batteryVoltage\":4.15,";
     payload += "\"batteryLevel\":95.0,";
-    payload += "\"soilMoisturePercent\":" +
-               String(soilPercent, 2) + ",";
+    payload += "\"soilMoisturePercent\":" + String(soilPercent, 2) + ",";
     payload += "\"measurements\":{";
     payload += "\"soil_moisture\":" + String(soilPercent, 2);
 
     if (distanceValid) {
-        payload += ",\"water_level_distance\":" +
-                   String(distanceCm, 2);
-
-        payload += ",\"waterLevelCm\":" +
-                   String(SENSOR_DATUM_OFFSET_CM - distanceCm, 2);
+        payload += ",\"water_level_distance\":" + String(distanceCm, 2);
+        payload += ",\"waterLevelCm\":" + String(SENSOR_DATUM_OFFSET_CM - distanceCm, 2);
     }
 
     payload += "}}";
 
-    Serial.printf("[TELEMETRY] POST %s\n", url.c_str());
-    Serial.printf("[TELEMETRY] Sequence: %lu\n", telemetrySequence);
+    Serial.printf("[TELEMETRY] Sequence #%lu -> POST %s\n", telemetrySequence, url.c_str());
     Serial.printf("[TELEMETRY] Payload: %s\n", payload.c_str());
 
     int httpCode = http.POST(payload);
     String response = httpCode > 0 ? http.getString() : "";
-    String transportError =
-        httpCode < 0 ? http.errorToString(httpCode) : "";
+    String transportError = httpCode < 0 ? http.errorToString(httpCode) : "";
 
     http.end();
 
@@ -955,47 +806,27 @@ bool sendTelemetry(
 
     if (httpCode >= 200 && httpCode < 300) {
         telemetrySuccesses++;
-
-        success(
-            String("Telemetry sequence ") +
-            String(telemetrySequence) +
-            " was accepted by the backend."
-        );
-
-        if (response.length()) {
+        success(String("Telemetry sequence #") + String(telemetrySequence) + " accepted by backend.");
+        if (response.length() > 0) {
             Serial.printf("[TELEMETRY] Response: %s\n", response.c_str());
         }
-
         return true;
     }
 
     telemetryFailures++;
-
-    errorLog(
-        String("Telemetry request failed with HTTP status ") +
-        String(httpCode) + "."
-    );
-
+    errorLog(String("Telemetry transmission failed with HTTP ") + String(httpCode));
     if (httpCode < 0) {
         errorLog(String("Transport error: ") + transportError);
     }
-
-    if (response.length()) {
-        Serial.printf(
-            "[TELEMETRY] Error response: %s\n",
-            response.c_str()
-        );
-    }
-
     return false;
 }
 
 // ============================================================
-// 30-SECOND MONITORING CYCLE
+// 15-MINUTE MONITORING CYCLE
 // ============================================================
 
 void runMonitoringCycle() {
-    printSection("30-SECOND MONITORING CYCLE");
+    printSection("15-MINUTE MONITORING CYCLE EXECUTION");
 
     if (!isMonitoringActive) {
         info("Monitoring is OFF. Skipping cycle.");
@@ -1004,73 +835,43 @@ void runMonitoringCycle() {
 
     Serial.printf("[CYCLE] Node ID: %s\n", nodeId.c_str());
 
-    info("STEP 1/3: Verify current backend pairing authorization.");
-
+    info("STEP 1/3: Verifying pairing status with backend...");
     if (!verifyBackendPairingStatus()) {
-        errorLog(
-            "Cycle stopped: backend approval was not confirmed."
-        );
-
-        info(
-            "No telemetry will be sent. A future cycle may retry "
-            "if monitoring remains active."
-        );
-
+        errorLog("Monitoring cycle aborted: Pairing expired, revoked, or invalid.");
+        isMonitoringActive = false;
+        prefs.putBool("active", false);
+        flashActivationLed(3); // 3 for error
+        updateLeds();
         return;
     }
 
-    if (!isMonitoringActive) {
-        warning("Monitoring was stopped during the authorization check.");
-        return;
-    }
-
-    info("STEP 2/3: Read sensor measurements.");
-
-    if (!connectWiFi()) {
-        errorLog("Cycle stopped because Wi-Fi is unavailable.");
-        return;
-    }
-
+    info("STEP 2/3: Reading sensor measurements...");
     int soilADC = readSoilADC();
     float soilPercent = soilPercentFromADC(soilADC);
 
     float distanceCm = 0.0f;
     bool distanceValid = readUltrasonicAverage(distanceCm);
 
-    info("STEP 3/3: Send telemetry.");
+    info("STEP 3/3: Transmitting telemetry...");
+    bool sent = sendTelemetry(soilPercent, distanceCm, distanceValid);
 
-    sendTelemetry(soilPercent, distanceCm, distanceValid);
+    if (!sent) {
+        flashActivationLed(3); // 3 for error
+    } else {
+        // Brief pulse on LED 1 to indicate transmission activity
+        digitalWrite(LED_ACTIVATE, LOW);
+        delay(100);
+        digitalWrite(LED_ACTIVATE, HIGH);
+    }
 
-    printSection("MONITORING CYCLE SUMMARY");
-
-    Serial.printf(
-        "[SUMMARY] Pairing: %s\n",
-        pairingStateName(pairingState)
-    );
-
-    Serial.printf(
-        "[SUMMARY] Monitoring: %s\n",
-        isMonitoringActive ? "ON" : "OFF"
-    );
-
-    Serial.printf(
-        "[SUMMARY] Telemetry attempts: %lu\n",
-        telemetryAttempts
-    );
-
-    Serial.printf(
-        "[SUMMARY] Successful transmissions: %lu\n",
-        telemetrySuccesses
-    );
-
-    Serial.printf(
-        "[SUMMARY] Failed transmissions: %lu\n",
-        telemetryFailures
-    );
+    printSection("CYCLE COMPLETE");
+    Serial.printf("[SUMMARY] Next 15-minute telemetry cycle in %lu ms\n", TELEMETRY_INTERVAL_MS);
 }
 
 // ============================================================
-// ACTIVATION BUTTON
+// ACTIVATION BUTTON HANDLER (GPIO 19)
+// Powers on device, verifies pairing, runs audit, starts 15-min monitoring
+// LED 1 feedback: 1 blink for success, 3 blinks for error
 // ============================================================
 
 void handleActivationButton() {
@@ -1090,56 +891,55 @@ void handleActivationButton() {
         if (activateStableState == LOW) {
             printSection("ACTIVATION BUTTON PRESSED");
 
-            if (!isMonitoringActive) {
-                if (!isPairedAndApproved) {
-                    errorLog(
-                        "Activation denied: no cached approval is available."
-                    );
+            // 1. If not yet powered on, power on and enable pairing button
+            if (!isDevicePoweredOn) {
+                isDevicePoweredOn = true;
+                success("Device powered ON. Pairing button is now ENABLED.");
+            }
 
-                    info(
-                        "Press the pairing button and obtain approval first."
-                    );
-
-                    updateLeds();
-                    return;
-                }
-
-                info(
-                    "Checking backend approval before activating monitoring."
-                );
-
-                if (!verifyBackendPairingStatus()) {
-                    errorLog(
-                        "Activation denied because current backend "
-                        "approval could not be verified."
-                    );
-
-                    updateLeds();
-                    return;
-                }
-
-                runActivationAudit();
-
-                isMonitoringActive = true;
-                prefs.putBool("active", true);
-
-                lastTransmissionTime = millis();
-
-                updateLeds();
-
-                success("Monitoring activated.");
-                info("Blue LED is ON.");
-                info("First monitoring cycle starts after 30 seconds.");
-
-            } else {
+            // 2. If monitoring is currently active, pressing activation toggles it OFF
+            if (isMonitoringActive) {
                 isMonitoringActive = false;
                 prefs.putBool("active", false);
-
                 updateLeds();
-
-                success("Monitoring deactivated.");
-                info("Periodic sensor acquisition and telemetry have stopped.");
+                success("Monitoring deactivated. Device remains powered ON in standby mode.");
+                return;
             }
+
+            // 3. Verify if pairing is still valid or not expired
+            info("Checking pairing authorization with backend...");
+            bool isPairingValid = verifyBackendPairingStatus();
+
+            if (!isPairingValid) {
+                errorLog("Activation ERROR: Pairing is expired, not found, or not approved.");
+                flashActivationLed(3); // 3 blinks for error
+                info("Pairing required. Press GPIO 23 (Pairing Button) to submit pairing request.");
+                return;
+            }
+
+            // 4. Run component audit checks
+            info("Pairing is valid and APPROVED. Running component audit checks...");
+            bool allComponentsGood = runActivationAudit();
+
+            if (!allComponentsGood) {
+                errorLog("Activation ERROR: Component audit failed. One or more components are not good.");
+                flashActivationLed(3); // 3 blinks for error
+                isMonitoringActive = false;
+                prefs.putBool("active", false);
+                updateLeds();
+                return;
+            }
+
+            // 5. All components pass audit and pairing is valid!
+            success("Activation SUCCESS: All components operational and pairing is valid!");
+            flashActivationLed(1); // 1 blink for success
+
+            isMonitoringActive = true;
+            prefs.putBool("active", true);
+            lastTransmissionTime = millis();
+            updateLeds(); // LED 1 solid ON
+
+            info("15-minute monitoring is now ACTIVE. First telemetry cycle will execute in 15 minutes.");
         }
     }
 
@@ -1147,7 +947,9 @@ void handleActivationButton() {
 }
 
 // ============================================================
-// PAIRING BUTTON
+// PAIRING BUTTON HANDLER (GPIO 23)
+// Can only be pressed if device was first powered on by activation
+// LED 2 feedback: 1 blink for success, 3 blinks for error
 // ============================================================
 
 void handlePairingButton() {
@@ -1165,6 +967,13 @@ void handlePairingButton() {
         pairingStableState = reading;
 
         if (pairingStableState == LOW) {
+            printSection("PAIRING BUTTON PRESSED");
+
+            if (!isDevicePoweredOn) {
+                warning("Pairing button DISABLED. Activation button must first be pressed to power on device.");
+                return;
+            }
+
             requestPairing();
         }
     }
@@ -1173,7 +982,7 @@ void handlePairingButton() {
 }
 
 // ============================================================
-// STARTUP
+// STARTUP / SETUP
 // ============================================================
 
 void setup() {
@@ -1182,21 +991,20 @@ void setup() {
 
     Serial.println();
     Serial.println(F("##################################################"));
-    Serial.println(F("#       ARVACORE / ARVANODE FIRMWARE              #"));
-    Serial.println(F("#       Backend-Verified Pairing                 #"));
+    Serial.println(F("#       ARVACORE / ARVANODE SENSOR NODE          #"));
+    Serial.println(F("#       AWD Precision Irrigation Firmware        #"));
     Serial.println(F("##################################################"));
 
-    printSection("HARDWARE INITIALIZATION");
+    printSection("GPIO INITIALIZATION");
 
     pinMode(LED_PAIRING, OUTPUT);
-    pinMode(LED_DATA, OUTPUT);
+    pinMode(LED_ACTIVATE, OUTPUT);
 
     digitalWrite(LED_PAIRING, LOW);
-    digitalWrite(LED_DATA, LOW);
+    digitalWrite(LED_ACTIVATE, LOW);
 
     pinMode(TRIG_PIN, OUTPUT);
     pinMode(ECHO_PIN, INPUT);
-
     digitalWrite(TRIG_PIN, LOW);
 
     pinMode(BTN_ACTIVATE, INPUT_PULLUP);
@@ -1205,42 +1013,40 @@ void setup() {
     analogReadResolution(12);
     analogSetPinAttenuation(SOIL_PIN, ADC_11db);
 
-    success("GPIO initialization completed.");
+    success("GPIO initialization complete.");
+    Serial.println(F("  - GPIO 19 : Activation button (Active LOW)"));
+    Serial.println(F("  - GPIO 23 : Pairing button (Active LOW)"));
+    Serial.println(F("  - GPIO 26 : LED 1 - Activation (1 blink=OK, 3=Error)"));
+    Serial.println(F("  - GPIO 25 : LED 2 - Pairing (1 blink=OK, 3=Error)"));
+    Serial.println(F("  - GPIO 34 : Soil moisture sensor AO"));
+    Serial.println(F("  - GPIO 5  : Ultrasonic TRIG"));
+    Serial.println(F("  - GPIO 18 : Ultrasonic ECHO"));
 
     printSection("PREFERENCES STORAGE");
 
     if (!prefs.begin("arvanode", false)) {
         errorLog("Failed to initialize Preferences storage.");
-
         while (true) {
-            digitalWrite(LED_DATA, LOW);
+            digitalWrite(LED_ACTIVATE, LOW);
             delay(1000);
         }
     }
 
     isPairedAndApproved = prefs.getBool("paired", false);
-
-    // Cached approval must be revalidated with the backend.
     pairingState = PAIRING_UNVERIFIED;
 
-    // Monitoring deliberately starts OFF after every reboot.
+    // Device deliberately starts in STANDBY / UNPOWERED mode
+    isDevicePoweredOn = false;
     isMonitoringActive = false;
     prefs.putBool("active", false);
-
-    info(
-        "Cached approval is not treated as current authorization. "
-        "Online verification is required before activation."
-    );
 
     printSection("NODE IDENTITY");
 
     WiFi.mode(WIFI_STA);
 
     uint8_t mac[6] = {0};
-
     if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
         char buffer[18];
-
         snprintf(
             buffer,
             sizeof(buffer),
@@ -1248,7 +1054,6 @@ void setup() {
             mac[0], mac[1], mac[2],
             mac[3], mac[4], mac[5]
         );
-
         macAddress = String(buffer);
     } else {
         macAddress = WiFi.macAddress();
@@ -1261,19 +1066,9 @@ void setup() {
         ? "NODE-" + compactMac.substring(compactMac.length() - 4)
         : "NODE-01";
 
-    Serial.printf("[BOOT] Node ID: %s\n", nodeId.c_str());
-    Serial.printf("[BOOT] MAC address: %s\n", macAddress.c_str());
-
-    Serial.printf(
-        "[BOOT] Backend: %s\n",
-        BACKEND_BASE_URL
-    );
-
-    Serial.printf(
-        "[BOOT] Pairing status endpoint: %s%s{nodeId}\n",
-        BACKEND_BASE_URL,
-        PAIRING_STATUS_PATH
-    );
+    Serial.printf("[BOOT] Node ID:      %s\n", nodeId.c_str());
+    Serial.printf("[BOOT] MAC address:  %s\n", macAddress.c_str());
+    Serial.printf("[BOOT] Backend URL:  %s\n", BACKEND_BASE_URL);
 
     printSection("BUTTON INITIALIZATION");
 
@@ -1287,27 +1082,16 @@ void setup() {
 
     updateLeds();
 
-    printSection("STARTUP SUMMARY");
+    printSection("SYSTEM READY - STANDBY MODE");
 
-    Serial.printf(
-        "[STATUS] Cached approval: %s\n",
-        isPairedAndApproved ? "YES" : "NO"
-    );
-
-    Serial.println(F("[STATUS] Live backend status: NOT YET VERIFIED"));
+    Serial.println(F("[STATUS] Device state: STANDBY (Unpowered)"));
+    Serial.println(F("[STATUS] Pairing button: DISABLED until Activation is pressed"));
     Serial.println(F("[STATUS] Monitoring: OFF"));
-    Serial.println(F("[STATUS] Telemetry interval: 30 seconds"));
-
-    info("No audit or telemetry is performed at startup.");
-
-    Serial.println(
-        F("[READY] Press GPIO 23 to request pairing.")
-    );
-
-    Serial.println(
-        F("[READY] Press GPIO 19 to activate after approval.")
-    );
-
+    Serial.println(F("[STATUS] Telemetry interval: 15 minutes"));
+    Serial.println();
+    Serial.println(F("[READY] Step 1: Press GPIO 19 (Activation Button) to power on."));
+    Serial.println(F("[READY] Step 2: If unpaired, press GPIO 23 (Pairing Button)."));
+    Serial.println(F("[READY] Step 3: Once approved, press GPIO 19 to run audit and start 15-min monitoring."));
     Serial.println();
 }
 
@@ -1321,6 +1105,7 @@ void loop() {
 
     unsigned long now = millis();
 
+    // Acquire and transmit telemetry every 15 minutes when monitoring is active
     if (
         isMonitoringActive &&
         now - lastTransmissionTime >= TELEMETRY_INTERVAL_MS
