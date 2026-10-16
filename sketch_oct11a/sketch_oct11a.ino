@@ -63,7 +63,7 @@ constexpr unsigned long WIFI_TIMEOUT_MS = 10000;
 constexpr unsigned long HTTP_TIMEOUT_MS = 10000;
 
 constexpr unsigned long TELEMETRY_INTERVAL_MS =
-    1UL * 1000UL;
+    3UL * 1000UL;
 constexpr unsigned long INITIAL_TELEMETRY_DELAY_MS =
     3UL * 1000UL;
 constexpr unsigned long TELEMETRY_BLINK_INTERVAL_MS = 100;
@@ -1103,12 +1103,12 @@ bool sendTelemetry(
             ",\"water_level_distance\":" +
             String(distanceCm, 2);
 
-        payload +=
-            ",\"waterLevelCm\":" +
-            String(
-                SENSOR_DATUM_OFFSET_CM - distanceCm,
-                2
-            );
+        float calculatedWaterLevel = SENSOR_DATUM_OFFSET_CM - distanceCm;
+        if (calculatedWaterLevel >= -30.0f && calculatedWaterLevel <= 30.0f) {
+            payload +=
+                ",\"waterLevelCm\":" +
+                String(calculatedWaterLevel, 2);
+        }
     }
 
     payload += "}}";
