@@ -63,9 +63,9 @@ constexpr unsigned long WIFI_TIMEOUT_MS = 10000;
 constexpr unsigned long HTTP_TIMEOUT_MS = 10000;
 
 constexpr unsigned long TELEMETRY_INTERVAL_MS =
-    3UL * 1000UL;
+    1UL * 1000UL;
 constexpr unsigned long INITIAL_TELEMETRY_DELAY_MS =
-    10UL * 1000UL;
+    3UL * 1000UL;
 constexpr unsigned long TELEMETRY_BLINK_INTERVAL_MS = 100;
 constexpr unsigned long PAIRING_POLL_INTERVAL_MS = 5000;
 constexpr unsigned long PAIRING_WAIT_TIMEOUT_MS = 60000;
@@ -1390,7 +1390,7 @@ void handleActivationButton() {
 
             info(
                 "Monitoring active. First telemetry cycle "
-                "will run in 10 seconds (repeats every 3 seconds)."
+                "will run in 3 seconds (repeats every 1 second)."
             );
         }
     }
@@ -1580,7 +1580,7 @@ void setup() {
     Serial.println(F("[STATUS] Mode: STANDBY"));
     Serial.println(F("[STATUS] Monitoring: OFF"));
     Serial.println(F("[STATUS] Pairing button: disabled until activation"));
-    Serial.println(F("[STATUS] Telemetry interval: 3 seconds (initial: 10 seconds)"));
+    Serial.println(F("[STATUS] Telemetry interval: 1 second (initial: 3 seconds)"));
 
     Serial.println();
     Serial.println(F("1. Open Serial Monitor at 115200 baud."));
@@ -1623,7 +1623,7 @@ void loop() {
             if (now - activationTimestamp >= INITIAL_TELEMETRY_DELAY_MS) {
                 isInitialTelemetryPending = false;
                 lastTransmissionTime = now;
-                info("Initial activation timer elapsed (10s). Triggering telemetry.");
+                info("Initial activation timer elapsed (3s). Triggering telemetry.");
                 runMonitoringCycle();
             }
         } else if (now - lastTransmissionTime >= TELEMETRY_INTERVAL_MS) {
