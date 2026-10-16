@@ -16,10 +16,12 @@ The **ArvaNode** is an independent, battery-powered IoT field node responsible f
 | Component | Function | Interface / Pin | Notes |
 |:---|:---|:---|:---|
 | **ESP32-WROOM-32** | Main controller & Wi-Fi uplink | — | 3.3V logic |
-| **JSN-SR04T / HC-SR04** | Ultrasonic distance measurement | TRIG: `GPIO 5`<br>ECHO: `GPIO 18` | Sensor mounted atop still-well pipe |
-| **Capacitive Soil Moisture v1.2** | Root-zone volumetric water content | Analog In: `GPIO 34` | Corrosion-resistant analog probe (ADC1_CH6) |
-| **Momentary Push Button 1** | Normal Monitoring & Telemetry Toggle | Input Pull-Up: `GPIO 19` | Active-LOW (Internal pull-up enabled) |
-| **Momentary Push Button 2** | Hardware Pairing Request Initiator | Input Pull-Up: `GPIO 23` | Active-LOW (Internal pull-up enabled) |
+| **JSN-SR04T / HC-SR04** | Ultrasonic distance measurement | TRIG: `GPIO 5`<br>ECHO: `GPIO 18` | Sensor mounted atop still-well pipe (valid: $20.0 - 450.0\,\text{cm}$) |
+| **Capacitive Soil Moisture v1.2** | Root-zone volumetric water content | Analog In: `GPIO 34` | Corrosion-resistant analog probe (ADC1_CH6, valid: $0.0 - 100.0\%$) |
+| **Momentary Push Button 1** | Activation & Component Audit | Input Pull-Up: `GPIO 19` | Active-LOW. Powers on node logic and runs self-test audit |
+| **Momentary Push Button 2** | Hardware Pairing Request Initiator | Input Pull-Up: `GPIO 23` | Active-LOW. Gated behind Activation Button (ignored if unactivated) |
+| **LED 1 (Audit / Activation Status)** | Diagnostic feedback for Activation | Output: `GPIO 2` | 1 blink = audit pass / activated; 3 blinks = audit failure |
+| **LED 2 (Pairing Status)** | Diagnostic feedback for Pairing | Output: `GPIO 4` | 1 blink = pairing approved / synced; 3 blinks = pairing error / expired |
 | **Voltage Divider** | Echo 5V to 3.3V stepping | ECHO pin path | $1\,\text{k}\Omega$ / $2\,\text{k}\Omega$ divider for 3.3V ESP32 pin protection |
 
 ---
@@ -32,30 +34,65 @@ The water level measurement follows the field still-well configuration detailed 
 - The JSN-SR04T sensor head is positioned at the top of the tube, exactly **$20.0\,\text{cm}$ above the soil surface datum**.
 - The distance $d$ measured by ultrasonic echo calculates water level $h$:
   $$h = 20.0\,\text{cm} - d$$
-  - $d = 20.0\,\text{cm} \implies h = 0.0\,\text{cm}$ (Field soil surface)
+  - $d = 20.0\,\text{cm} \implies h = 0.0\,\text{cm}$ (Field soil surface datum)
   - $d = 35.0\,\text{cm} \implies h = -15.0\,\text{cm}$ (AWD reflood threshold)
   - $d = 15.0\,\text{cm} \implies h = +5.0\,\text{cm}$ (Target ponded flood depth)
 
 ---
 
-## 3. Firmware Structure (`sketch_oct11a/sketch_oct11a.ino`)
+## 3. Operational Workflow: Dual-Button & LED Feedback
 
-The firmware contains:
-1. **Ultrasonic Sampling (`measureDistance`)**:
-   - Generates $10\,\mu\text{s}$ trigger pulse.
-   - Measures echo return duration with a $30\,\text{ms}$ timeout.
-   - Filters out out-of-spec readings ($<20.0\,\text{cm}$ or $>450.0\,\text{cm}$).
-2. **Capacitive Soil Sampling (`measureSoilMoisture`)**:
-   - Reads ADC (`GPIO 34`).
-   - Calibrates between dry air value (`3200`) and water immersion (`1500`) to output $0.0 - 100.0\%$.
-3. **Wi-Fi Connectivity & Authenticated Uplink (`sendTelemetry`)**:
-   - Connects to the local gateway Wi-Fi network.
-   - Formats compliant JSON payloads with node identification, sequence number, distance, and water level.
-   - Transmits HTTP POST to `/api/v1/telemetry/uplink/{nodeId}` with `X-ArvaCore-Gateway-Key`.
+```mermaid
+stateDiagram-v2
+    [*] --> Standby : Powered On
+    Standby --> SelfAudit : Press Button 1 (GPIO 19 - Activation)
+    
+    state SelfAudit {
+        [*] --> CheckUltrasonic
+        CheckUltrasonic --> CheckMoisture
+        CheckMoisture --> CheckNetwork
+    }
+
+    SelfAudit --> ActiveMonitoring : Audit Passed (LED 1: 1 Blink)
+    SelfAudit --> Standby : Audit Failed (LED 1: 3 Blinks)
+
+    ActiveMonitoring --> PairingRequest : Press Button 2 (GPIO 23 - Pairing)
+    PairingRequest --> ActiveMonitoring : Pairing Success (LED 2: 1 Blink)
+    PairingRequest --> ActiveMonitoring : Expired / Rejected (LED 2: 3 Blinks)
+    
+    ActiveMonitoring --> ActiveMonitoring : Transmit Telemetry every 3 seconds
+```
+
+1. **Activation Button (`GPIO 19`)**:
+   - Must be pressed first to activate the node. Pressing Button 2 (Pairing) before activation is ignored.
+   - Triggers an initial diagnostic audit across all connected sensors and Wi-Fi connectivity.
+   - **Audit Result Indication (LED 1)**:
+     - **1 Blink**: All hardware components functional; node transitions to `ACTIVATED`.
+     - **3 Blinks**: Hardware sensor failure, disconnected probe, or out-of-range sensor detection.
+2. **Pairing Button (`GPIO 23`)**:
+   - Initiates a hardware pairing request to the ArvaCore gateway / backend.
+   - Pairing window adheres to a strict **30-minute authoritative expiration window**.
+   - **Pairing Feedback (LED 2)**:
+     - **1 Blink**: Pairing approved by administrator or active pairing session confirmed.
+     - **3 Blinks**: Pairing failed, rejected, or 30-minute authorization window expired.
+3. **Mandatory 3-Second Telemetry Policy**:
+   - In active operational mode, the node samples and transmits telemetry every **3 seconds** (`TELEMETRY_INTERVAL_MS = 3000UL`).
 
 ---
 
-## 4. Telemetry Payload Format
+## 4. Sensor Bounds & Truthful Measurement Invariants
+
+The firmware adheres to strict measurement truthfulness:
+- **Ultrasonic Distance**: Plausible physical range is $20.0\,\text{cm}$ to $450.0\,\text{cm}$. Readings outside this range, echo timeouts, or sensor disconnection produce an explicit error indicator (`-1.0` or null), never a fabricated zero.
+- **Valid Zero vs. Sensor Error**:
+  - A water depth of $0.0\,\text{cm}$ corresponds to the physical soil surface ($d = 20.0\,\text{cm}$) and is preserved as a valid numeric reading.
+  - A soil moisture reading of $0.0\%$ (bone dry soil) is preserved as a valid numeric reading, distinct from a disconnected probe error condition.
+- **Capacitive Soil Moisture**: Calibrated ADC range ($0.0 - 100.0\%$).
+- **Battery Monitoring**: Operating range $2.5\,\text{V} - 5.0\,\text{V}$.
+
+---
+
+## 5. Telemetry Payload Format
 
 ```json
 {
@@ -64,13 +101,14 @@ The firmware contains:
   "water_level_distance": 25.5,
   "waterLevelCm": -5.5,
   "soilMoisturePercent": 42.0,
-  "batteryVoltage": 4.15
+  "batteryVoltage": 4.15,
+  "sensorError": false
 }
 ```
 
 ---
 
-## 5. Build, Flash & Simulation
+## 6. Build, Flash & Simulation
 
 ### Uploading to ESP32 via Arduino IDE or CLI
 1. Install ESP32 board definitions in Arduino IDE (`Tools > Board > ESP32 Dev Module`).
