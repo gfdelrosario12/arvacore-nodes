@@ -782,8 +782,8 @@ bool verifyBackendPairingStatus() {
         return false;
     }
 
-    if (status == "REJECTED" || status == "REVOKED") {
-        warning("Pairing was rejected or revoked.");
+    if (status == "REJECTED" || status == "REVOKED" || status == "EXPIRED") {
+        warning("Pairing was rejected, revoked, or expired.");
         applyPairingState(PAIRING_REJECTED);
         return false;
     }
@@ -1008,11 +1008,11 @@ void requestPairing() {
         return;
     }
 
-    if (status == "REJECTED" || status == "REVOKED") {
+    if (status == "REJECTED" || status == "REVOKED" || status == "EXPIRED") {
         pairingFailures++;
         applyPairingState(PAIRING_REJECTED);
 
-        errorLog("Backend rejected or revoked pairing.");
+        errorLog("Backend rejected, revoked, or expired pairing.");
         flashPairingLed(3);
         return;
     }
@@ -1170,6 +1170,13 @@ bool sendTelemetry(
         String("Telemetry rejected or failed. HTTP ") +
         String(httpCode)
     );
+
+    if (httpCode == 401 || httpCode == 403 ||
+        (httpCode == 400 && (response.indexOf("NODE_NOT_ACTIVE") >= 0 || response.indexOf("REVOKED") >= 0 || response.indexOf("UNREGISTERED") >= 0))) {
+        warning("Node has been revoked or unpaired by backend. Clearing pairing state.");
+        applyPairingState(PAIRING_REJECTED);
+        flashPairingLed(3);
+    }
 
     if (httpCode < 0) {
         errorLog(

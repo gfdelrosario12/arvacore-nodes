@@ -61,6 +61,7 @@ stateDiagram-v2
     PairingRequest --> ActiveMonitoring : Expired / Rejected (LED 2: 3 Blinks)
     
     ActiveMonitoring --> ActiveMonitoring : Transmit Telemetry every 3 seconds
+    ActiveMonitoring --> Standby : Revoked / Unpaired by Backend (LED 2: 3 Blinks)
 ```
 
 1. **Activation Button (`GPIO 19`)**:
@@ -69,12 +70,14 @@ stateDiagram-v2
    - **Audit Result Indication (LED 1)**:
      - **1 Blink**: All hardware components functional; node transitions to `ACTIVATED`.
      - **3 Blinks**: Hardware sensor failure, disconnected probe, or out-of-range sensor detection.
-2. **Pairing Button (`GPIO 23`)**:
+2. **Pairing Button (`GPIO 23`) & Pairing Lifecycle**:
    - Initiates a hardware pairing request to the ArvaCore gateway / backend.
-   - Pairing window adheres to a strict **30-minute authoritative expiration window**.
+   - **Permanent Accepted Pairings**: Once accepted by the operator, pairings persist indefinitely across node deep sleep, power cycles, and network disconnects.
+   - **30-Minute Pending Expiration**: Unaccepted pairing requests strictly expire after 30 minutes, after which the node clears pending credentials and signals expiration.
+   - **Remote Unpairing & Revocation Handling**: If an operator forcefully unpairs the node via the backend API/UI (`DELETE /api/v1/nodes/{nodeId}/pairing`), subsequent telemetry uplinks (HTTP 401/403/`NODE_NOT_ACTIVE`/`REVOKED`) automatically trigger firmware unpairing: local credentials are purged, the node reverts to an unverified state, LED 2 flashes 3 times, and further telemetry is halted until a new pairing sequence is approved.
    - **Pairing Feedback (LED 2)**:
      - **1 Blink**: Pairing approved by administrator or active pairing session confirmed.
-     - **3 Blinks**: Pairing failed, rejected, or 30-minute authorization window expired.
+     - **3 Blinks**: Pairing failed, rejected, expired (30m window elapsed), or revoked.
 3. **Mandatory 3-Second Telemetry Policy**:
    - In active operational mode, the node samples and transmits telemetry every **3 seconds** (`TELEMETRY_INTERVAL_MS = 3000UL`).
 
