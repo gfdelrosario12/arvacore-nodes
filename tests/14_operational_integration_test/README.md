@@ -82,3 +82,4 @@ The full system integration incorporates:
    - Blue LED turns **OFF**.
    - Green LED remains **Solid ON** (pairing approval preserved in flash).
    - Telemetry cycle halts.
+

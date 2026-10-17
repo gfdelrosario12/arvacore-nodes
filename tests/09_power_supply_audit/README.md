@@ -89,3 +89,4 @@ Brownout detector was triggered
 1. Solder a **470 µF to 1000 µF 10V low-ESR electrolytic capacitor** across the `VIN` (5V) and `GND` pins on the breadboard or sensor expansion shield.
 2. Place a **10 µF tantalum capacitor + 100 nF ceramic capacitor** directly across `3V3` and `GND`.
 3. Power the HC-SR04 from an independent 5V power supply (with grounds tied together) if powering from a high-loss laptop USB port.
+

@@ -51,3 +51,4 @@ ANALYSIS          : Signal source impedance is within spec (<10k) with minimal r
 - **Add a Decoupling Capacitor**: Solder or insert a 100 nF ceramic capacitor between GPIO 34 and GND directly adjacent to the ESP32 header. This shunts high-frequency RF and switching regulator noise directly to ground.
 - **Multisampling**: Always average 10–20 readings in firmware to filter white Gaussian thermal noise.
 - **Power Decoupling**: If jitter exceeds 150 counts with a sensor connected, verify the 3.3V regulator rail using a DMM or oscilloscope for high ripple caused by cheap USB switch-mode power supplies.
+

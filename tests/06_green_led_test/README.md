@@ -50,3 +50,4 @@ EXPECTED VISUAL   : Green LED pulsing at 1 cycle per second (pairing wait emulat
    - Cause: Resistor value too high (e.g., 10 kΩ instead of 220 Ω or 330 Ω). Verify color bands or measure with DMM.
 3. **ESP32 resets or reboots when LED turns ON**:
    - Cause: LED connected without a resistor, causing a dead short from 3.3V to GND, triggering internal brownout detection.
+

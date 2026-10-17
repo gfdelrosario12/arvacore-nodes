@@ -50,3 +50,4 @@ EXPECTED VISUAL   : Blue LED flickering rapidly (emulates active HTTP transmissi
    - Fix: Verify that the longer wire lead (Anode) connects to GPIO 26 through the resistor, and the shorter lead with the flat notch on the plastic collar connects to GND.
 3. **GPIO 26 Pad Damage**:
    - Fix: Probe GPIO 26 directly with a multimeter in DC Volts mode. It must cycle between 0.0V and 3.3V.
+

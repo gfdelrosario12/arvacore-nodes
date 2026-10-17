@@ -50,3 +50,4 @@ BUTTON EVENT      : RELEASE DETECTED (Total releases: 1)
    - Verify jumper is in GPIO 23 and not GPIO 22 (adjacent pin).
 3. **Ghost Press Events When Hands Move Near Wires**:
    - Indicates internal pull-up may be disabled or damaged. Add an external 10 kΩ pull-up resistor between GPIO 23 and 3.3V.
+

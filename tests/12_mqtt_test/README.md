@@ -32,3 +32,4 @@ void connectMqtt() {
 
 ### 3. Engineering Caveat
 Even if an MQTT broker connects successfully, it does not prove backend message ingestion or pump actuation unless verified end-to-end against the database or event pipeline.
+

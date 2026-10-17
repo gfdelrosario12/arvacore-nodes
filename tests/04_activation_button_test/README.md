@@ -50,3 +50,4 @@ BUTTON EVENT      : RELEASE DETECTED (Total releases: 1)
 3. **Multiple Press Events Counted on a Single Physical Tap**:
    - Cause: Excessive contact bounce (> 50 ms) typical of worn mechanical switches.
    - Fix: Increase `DEBOUNCE_DELAY_MS` to 80 or 100 ms in code or add a 100 nF capacitor across the button terminals.
+

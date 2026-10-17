@@ -58,3 +58,4 @@ CALIBRATION NOTE  : Moisture percentage is a provisional estimate. True volumetr
 3. **Status: UNSTABLE ANALOG NOISE DETECTED (Spread > 350 counts)**:
    - Meaning: High impedance source or excessive ripple on the 3.3V power rail.
    - Troubleshooting: Place a 100 nF (0.1 µF) ceramic capacitor between GPIO 34 and GND directly at the ESP32 header pins.
+

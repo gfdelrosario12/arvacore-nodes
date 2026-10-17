@@ -50,3 +50,4 @@ DIAGNOSTIC RESULT : SUCCESS — Backend is reachable and responded with HTTP 200
 | **HTTP status -11 (Timeout)** | TLS handshake took longer than `HTTP_TIMEOUT_MS` (10s) | High packet loss or weak RSSI; verify Test 10 |
 | **HTTP 401 / 403 Forbidden** | `GATEWAY_KEY` mismatch or expired header token | Verify key string against ArvaCore backend environment configuration |
 | **HTTP 404 Not Found** | Node ID not registered in database | Expected for brand-new nodes; run pairing request via Test 14 |
+

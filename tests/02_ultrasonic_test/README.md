@@ -68,3 +68,4 @@ DISTANCE ACCURACY : NOT YET VERIFIED — compare with a known physical distance.
 3. **Fluctuating / Erratic Measurements**:
    - Reflections from nearby objects or table edges in the 15° acoustic cone.
    - Poor ground connection or noise from unshielded wires.
+

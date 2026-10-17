@@ -64,3 +64,4 @@ ESP32 BSSID       : A4:2B:B0:XX:YY:ZZ
    - Pre-Shared Key (PSK / password) mismatch, or unsupported WPA3-Enterprise configuration.
 4. **RSSI Weaker than -85 dBm**:
    - Signal is near receiver sensitivity floor (~ -96 dBm). Expect intermittent packet drops. Move closer to the router or remove metallic obstacles.
+

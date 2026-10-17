@@ -96,3 +96,4 @@ To systematically isolate faults without cross-component interference, execute t
 11. **`tests/10_wifi_test`**: Verify 2.4 GHz RF environment and station DHCP association.
 12. **`tests/11_backend_connectivity_test`**: Confirm DNS, TLS 443 handshake, and Gateway Key authentication.
 13. **`tests/14_operational_integration_test`**: Run full production firmware lifecycle validation (`sketch_oct11a`).
+

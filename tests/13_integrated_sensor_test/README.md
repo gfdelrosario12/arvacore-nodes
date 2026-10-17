@@ -47,3 +47,4 @@ SUBSYSTEM HEALTH  : Soil = [PASS] | Ultrasonic = [PASS]
 - **Case B: Block Ultrasonic Echo (disconnect ECHO)**:
   - Transducer 1 reports `SOIL SENSOR STATUS: WORKING` with valid moisture.
   - Transducer 2 reports `ULTRASONIC STATUS: FAULT` (0/5 pings).
+
