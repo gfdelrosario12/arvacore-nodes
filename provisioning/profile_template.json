@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "logical_node_id": "ARVANODE-001",
+  "display_name": "ArvaNode Field 01",
+  "profile_version": 1,
+  "hardware_mac": "",
+  "hardware_model": "ESP32-WROOM-32",
+  "hardware_revision": "rev1",
+  "firmware_version": "1.2.0",
+  "build_id": "std-20261018",
+  "device_key": "sample_device_credential_placeholder",
+  "status": "GENERATED",
+  "network": {
+    "wifi_ssid": "Cream",
+    "wifi_password": "hatdog123",
+    "backend_base_url": "https://api-aquaflow.gladwindr.me/api/v1",
+    "gateway_key": "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9"
+  },
+  "sensor_config": {
+    "datum_offset_cm": 20.0,
+    "min_distance_cm": 2.0,
+    "max_distance_cm": 450.0,
+    "soil_air_value": 3200,
+    "soil_water_value": 1500,
+    "telemetry_interval_ms": 3000
+  },
+  "pinout": {
+    "soil_moisture_analog": 34,
+    "ultrasonic_trig": 5,
+    "ultrasonic_echo": 18,
+    "activation_btn": 19,
+    "pairing_btn": 23,
+    "pairing_led": 25,
+    "activation_led": 26
+  },
+  "metadata": {
+    "created_at": "2026-10-18T00:00:00Z",
+    "updated_at": "2026-10-18T00:00:00Z",
+    "last_flashed_at": null,
+    "last_flashed_port": null
+  }
+}
+

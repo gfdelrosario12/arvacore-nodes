@@ -111,27 +111,111 @@ The firmware adheres to strict measurement truthfulness:
 
 ---
 
-## 6. Build, Flash & Simulation
+---
 
-### Uploading to ESP32 via Arduino IDE or CLI
-1. Install ESP32 board definitions in Arduino IDE (`Tools > Board > ESP32 Dev Module`).
-2. Open [`sketch_oct11a/sketch_oct11a.ino`](sketch_oct11a/sketch_oct11a.ino).
-3. Set your target gateway IP and Wi-Fi SSID:
-   ```cpp
-   const char* WIFI_SSID = "ARVACORE_GATEWAY";
-   const char* WIFI_PASS = "arvacore2026";
-   const char* BACKEND_URL = "https://api-aquaflow.gladwindr.me/api/v1/telemetry/uplink/NODE-01";
-   const char* GATEWAY_KEY = "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9";
-   ```
-4. Compile and upload to your ESP32 board over USB.
+## 5. Dynamic Node Provisioning & Identity Management
 
-### Testing Without Hardware (Python Uplink Simulator)
-Use [`test_uplink_gateway.py`](test_uplink_gateway.py) to simulate an ArvaNode transmitting telemetry to a running backend:
+ArvaCore replaces static, manual firmware modifications with a centralized provisioning system supporting up to **10 uniquely identified ESP32 nodes** (`ARVANODE-001` through `ARVANODE-010`):
+
+| Profile | Logical Identity | Default Display Name | Role & Placement |
+|:---:|:---|:---|:---|
+| **1** | `ARVANODE-001` | ArvaNode Field 01 | Paddy Quadrant 1 (North-West) |
+| **2** | `ARVANODE-002` | ArvaNode Field 02 | Paddy Quadrant 2 (North-East) |
+| **3** | `ARVANODE-003` | ArvaNode Field 03 | Paddy Quadrant 3 (South-West) |
+| **4** | `ARVANODE-004` | ArvaNode Field 04 | Paddy Quadrant 4 (South-East) |
+| **5** | `ARVANODE-005` | ArvaNode Field 05 | Lateral Feeder Inlet |
+| **6** | `ARVANODE-006` | ArvaNode Field 06 | Central Drain Checkpoint |
+| **7** | `ARVANODE-007` | ArvaNode Field 07 | Low-Lying Depression Zone |
+| **8** | `ARVANODE-008` | ArvaNode Field 08 | Elevated Ridge Perimeter |
+| **9** | `ARVANODE-009` | ArvaNode Field 09 | Main Pump Sump / Still-Well |
+| **10** | `ARVANODE-010` | ArvaNode Field 10 | Perimeter Reserve Zone |
+
+### Provisioning Tool: `scripts/node_provisioner.py`
+
 ```bash
-python3 test_uplink_gateway.py
+# List all generated provisioning profiles
+python3 scripts/node_provisioner.py list
+
+# Generate the next available profile (auto-selected from default pool)
+python3 scripts/node_provisioner.py generate
+
+# Generate or overwrite a specific logical profile
+python3 scripts/node_provisioner.py generate --id ARVANODE-004 --name "ArvaNode Field 04" --force
+
+# Inspect profile configuration (secrets redacted by default)
+python3 scripts/node_provisioner.py inspect ARVANODE-001
+
+# Inspect raw profile with secrets unmasked (for technician bench provisioning)
+python3 scripts/node_provisioner.py inspect ARVANODE-001 --show-secrets
+
+# Validate all profile configurations against schema and system invariants
+python3 scripts/node_provisioner.py validate
+
+# Export C/C++ build configuration header (node_config.h)
+python3 scripts/node_provisioner.py export-header ARVANODE-001
 ```
-Expected output:
-```text
-[SUCCESS] Gateway HTTP 200: {"status":"SUCCESS","readingsIngested":3}
+
+> [!SECURITY]
+> **Secret Management**: Device credentials (`dev_sec_***`), gateway keys, and Wi-Fi secrets are saved locally with restrictive POSIX permissions (`0600`) in `provisioning/profiles/` and excluded from Git via `.gitignore`. The repository only tracks `provisioning/profile_template.json`.
+
+---
+
+## 6. ESP32 Auto-Flasher Tooling (`scripts/esp32_flasher.py`)
+
+The auto-flasher bridges the identity generator directly with the Arduino CLI toolchain (`esp32:esp32:esp32`):
+
+```bash
+# Detect connected USB-to-UART serial adapters (CP2102, CH340, FTDI)
+python3 scripts/esp32_flasher.py devices
+
+# Build firmware for a profile without flashing (dry-run preview)
+python3 scripts/esp32_flasher.py build --id ARVANODE-001 --dry-run
+
+# Preview planned flashing command and port target
+python3 scripts/esp32_flasher.py flash --id ARVANODE-001 --dry-run
+
+# Build and flash an existing profile to a specific serial port
+python3 scripts/esp32_flasher.py flash --id ARVANODE-001 --port /dev/ttyUSB0
+
+# One-step provision, build, flash, and verify
+python3 scripts/esp32_flasher.py provision --id ARVANODE-002 --port /dev/ttyUSB0
+
+# Reconnect and verify boot banner emitted by hardware
+python3 scripts/esp32_flasher.py verify --port /dev/ttyUSB0 --expected-id ARVANODE-002
+
+# Produce an audit report of all profiles and their flash history
+python3 scripts/esp32_flasher.py report
 ```
+
+### Manual Bootloader Recovery Procedure
+If flashing halts with `A fatal error occurred: Failed to connect to ESP32: No serial data received`:
+1. Press and **HOLD** the `BOOT` button on the ESP32 development board.
+2. While holding `BOOT`, tap the `EN` / `RST` button once.
+3. Release `BOOT` when the terminal displays `Connecting........_____`.
+4. Press `EN` after upload completes to reset into runtime monitoring.
+
+---
+
+## 7. Sensor Calibration & Known Electrical Findings
+
+1. **JSN-SR04T / HC-SR04 Ultrasonic Sensor**:
+   - Accurately converts float distance into water height relative to datum:
+     $$\text{Water Level} = \text{Datum (20.0 cm)} - \text{Measured Distance (cm)}$$
+   - Operational range: $2.0\,\text{cm}$ to $450.0\,\text{cm}$.
+2. **Resistive Soil Moisture Sensor Warning**:
+   - Prior laboratory audits revealed ADC saturation stuck at `4095` on `GPIO 34` when using low-grade resistive probes or floating inputs.
+   - **Policy**: The firmware truthfully reports raw readings and flags sensor errors rather than fabricating valid soil moisture numbers. Always inspect physical wiring and ensure clean probe excitation grounding before deployment.
+
+---
+
+## 8. Automated Tooling & Integration Tests
+
+Execute the automated test suite covering profile generation, duplicate rejection, 10-node limit enforcement, dry-run simulation, and hardware verification:
+
+```bash
+# Run unit tests for provisioner and auto-flasher
+python3 -m unittest tests/test_provisioning_and_flasher.py
+```
+*Result: 15 / 15 tests passing cleanly (`OK`).*
+
 

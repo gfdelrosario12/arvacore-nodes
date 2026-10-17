@@ -1,0 +1,24 @@
+# Build and tool outputs
+build/
+*.bin
+*.elf
+*.hex
+*.o
+*.a
+.arduino15/
+
+# Generated device configuration with local secrets
+sketch_oct11a/node_config.h
+
+# Generated provisioning profiles with device-specific secrets
+provisioning/profiles/*.json
+!provisioning/profiles/.gitkeep
+
+# Python caches and virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+

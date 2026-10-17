@@ -33,8 +33,25 @@
 // Definitive sensor validation may require changing the input.
 // ============================================================
 
+// ---------------- BUILD-TIME / PROVISIONED CONFIGURATION -----
+#if __has_include("node_config.h")
+#include "node_config.h"
+#endif
+
 // ---------------- NETWORK CONFIGURATION ----------------------
 
+#ifdef ARVA_CONFIG_INJECTED
+const char* WIFI_SSID = NODE_WIFI_SSID;
+const char* WIFI_PASSWORD = NODE_WIFI_PASS;
+const char* BACKEND_BASE_URL = NODE_BACKEND_URL;
+const char* GATEWAY_KEY = NODE_GATEWAY_KEY;
+
+const char* PROVISIONED_NODE_ID = NODE_LOGICAL_ID;
+const char* PROVISIONED_DISPLAY_NAME = NODE_DISPLAY_NAME;
+const char* PROVISIONED_FIRMWARE_VER = NODE_FIRMWARE_VERSION;
+const char* PROVISIONED_BUILD_ID = NODE_BUILD_ID;
+constexpr float SENSOR_DATUM_OFFSET_CM = NODE_DATUM_OFFSET_CM;
+#else
 const char* WIFI_SSID = "Cream";
 const char* WIFI_PASSWORD = "hatdog123";
 
@@ -43,6 +60,13 @@ const char* BACKEND_BASE_URL =
 
 const char* GATEWAY_KEY =
     "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9";
+
+const char* PROVISIONED_NODE_ID = "";
+const char* PROVISIONED_DISPLAY_NAME = "ArvaNode Default";
+const char* PROVISIONED_FIRMWARE_VER = "1.2.0";
+const char* PROVISIONED_BUILD_ID = "std-20261018";
+constexpr float SENSOR_DATUM_OFFSET_CM = 20.0f;
+#endif
 
 // ---------------- GPIO DEFINITIONS ---------------------------
 
@@ -908,7 +932,7 @@ void requestPairing() {
     payload += "\"nodeId\":\"" + nodeId + "\",";
     payload += "\"macAddress\":\"" + macAddress + "\",";
     payload += "\"hardwareModel\":\"ESP32-WROOM-32\",";
-    payload += "\"firmwareVersion\":\"2.1.0\"";
+    payload += "\"firmwareVersion\":\"" + String(PROVISIONED_FIRMWARE_VER) + "\"";
     payload += "}";
 
     Serial.printf("[PAIRING] POST %s\n", url.c_str());
@@ -1550,14 +1574,33 @@ void setup() {
     String compactMac = macAddress;
     compactMac.replace(":", "");
 
-    nodeId = compactMac.length() >= 4
-        ? "NODE-" +
-          compactMac.substring(compactMac.length() - 4)
-        : "NODE-01";
+    if (strlen(PROVISIONED_NODE_ID) > 0) {
+        nodeId = String(PROVISIONED_NODE_ID);
+    } else {
+        nodeId = compactMac.length() >= 4
+            ? "NODE-" +
+              compactMac.substring(compactMac.length() - 4)
+            : "NODE-01";
+    }
 
     Serial.printf(
         "[BOOT] Node ID: %s\n",
         nodeId.c_str()
+    );
+
+    Serial.printf(
+        "[BOOT] Display Name: %s\n",
+        PROVISIONED_DISPLAY_NAME
+    );
+
+    Serial.printf(
+        "[BOOT] Firmware Ver: %s\n",
+        PROVISIONED_FIRMWARE_VER
+    );
+
+    Serial.printf(
+        "[BOOT] Build ID: %s\n",
+        PROVISIONED_BUILD_ID
     );
 
     Serial.printf(
