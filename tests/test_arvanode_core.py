@@ -32,19 +32,43 @@ class TestArvaNodeModels(unittest.TestCase):
         self.assertEqual(config.logical_node_id, "ARVANODE-001")
         self.assertEqual(config.display_name, "ArvaNode Field 01")
         self.assertEqual(config.sensor.telemetry_interval_ms, 3000)
+        # Verify standardized primary and fallback Wi-Fi networks
+        self.assertEqual(config.network.primary_ssid, "ArvaLink-2")
+        self.assertEqual(config.network.primary_password, "ARVaLINK2_2026")
+        self.assertEqual(config.network.fallback_ssid, "ArvaLink-1")
+        self.assertEqual(config.network.fallback_password, "ARVaLINK1_2026")
         # Validate passes without exception
         config.validate()
+
+    def test_wifi_networks_priority_serialization(self):
+        """Verify networks list serialization with priority 1 (ArvaLink-2) and 2 (ArvaLink-1)."""
+        config = NodeConfig.from_default(1)
+        data = config.to_dict()
+        networks = data["network"]["networks"]
+        self.assertEqual(len(networks), 2)
+        self.assertEqual(networks[0]["ssid"], "ArvaLink-2")
+        self.assertEqual(networks[0]["priority"], 1)
+        self.assertEqual(networks[1]["ssid"], "ArvaLink-1")
+        self.assertEqual(networks[1]["priority"], 2)
+
+        # Roundtrip deserialization
+        reconstructed = NodeConfig.from_dict(data)
+        self.assertEqual(reconstructed.network.primary_ssid, "ArvaLink-2")
+        self.assertEqual(reconstructed.network.fallback_ssid, "ArvaLink-1")
 
     def test_in_memory_modification_without_profile(self):
         """Verify editing configuration purely in-memory works seamlessly."""
         config = NodeConfig.from_default(2)
         # Create updated config with modified values
         updated_net = NetworkConfig(
-            wifi_ssid="CustomFarmWiFi",
-            wifi_password="SuperSecretPassword123",
+            primary_ssid="CustomFarmWiFi",
+            primary_password="SuperSecretPassword123",
+            fallback_ssid="CustomFallbackWiFi",
+            fallback_password="FallbackPassword123",
             backend_base_url="https://api-aquaflow.gladwindr.me/api/v1",
             gateway_key="custom_gateway_key"
         )
+
         updated_sensor = SensorConfig(
             datum_offset_cm=20.0,
             min_distance_cm=2.0,
@@ -143,8 +167,13 @@ class TestBuildService(unittest.TestCase):
         self.assertTrue(res_path.exists())
         content = header_file.read_text()
         self.assertIn('#define NODE_LOGICAL_ID "ARVANODE-001"', content)
+        self.assertIn('#define NODE_PRIMARY_WIFI_SSID "ArvaLink-2"', content)
+        self.assertIn('#define NODE_PRIMARY_WIFI_PASS "ARVaLINK2_2026"', content)
+        self.assertIn('#define NODE_FALLBACK_WIFI_SSID "ArvaLink-1"', content)
+        self.assertIn('#define NODE_FALLBACK_WIFI_PASS "ARVaLINK1_2026"', content)
         self.assertIn("#define NODE_TELEMETRY_INTERVAL_MS 3000UL", content)
         self.assertIn("#define ARVA_CONFIG_INJECTED 1", content)
+
 
     def test_compile_dry_run(self):
         config = NodeConfig.from_default(1)

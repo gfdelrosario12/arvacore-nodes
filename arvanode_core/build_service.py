@@ -67,9 +67,13 @@ class BuildService:
 #define NODE_DEVICE_KEY "{config.device_key}"
 #define NODE_HARDWARE_MAC "{config.hardware_mac}"
 
-// Network Configuration
-#define NODE_WIFI_SSID "{config.network.wifi_ssid}"
-#define NODE_WIFI_PASS "{config.network.wifi_password}"
+// Network Configuration (Primary & Fallback Priority)
+#define NODE_PRIMARY_WIFI_SSID "{config.network.primary_ssid}"
+#define NODE_PRIMARY_WIFI_PASS "{config.network.primary_password}"
+#define NODE_FALLBACK_WIFI_SSID "{config.network.fallback_ssid}"
+#define NODE_FALLBACK_WIFI_PASS "{config.network.fallback_password}"
+#define NODE_WIFI_SSID "{config.network.primary_ssid}"
+#define NODE_WIFI_PASS "{config.network.primary_password}"
 #define NODE_BACKEND_URL "{config.network.backend_base_url}"
 #define NODE_GATEWAY_KEY "{config.network.gateway_key}"
 

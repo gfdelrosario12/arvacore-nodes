@@ -116,37 +116,47 @@ class ArvaNodeFlasherApp(tk.Tk):
         self.var_display_name = tk.StringVar(value="ArvaNode Field 01")
         ttk.Entry(cfg_frame, textvariable=self.var_display_name, width=32).grid(row=0, column=3, sticky=tk.W, padx=4, pady=3)
 
-        # Row 1: WiFi SSID & Password
-        ttk.Label(cfg_frame, text="WiFi SSID:").grid(row=1, column=0, sticky=tk.W, padx=4, pady=3)
-        self.var_wifi_ssid = tk.StringVar(value="Cream")
-        ttk.Entry(cfg_frame, textvariable=self.var_wifi_ssid, width=20).grid(row=1, column=1, sticky=tk.W, padx=4, pady=3)
+        # Row 1: Primary Wi-Fi (Priority 1)
+        ttk.Label(cfg_frame, text="Primary Wi-Fi (P1):").grid(row=1, column=0, sticky=tk.W, padx=4, pady=3)
+        self.var_primary_ssid = tk.StringVar(value="ArvaLink-2")
+        ttk.Entry(cfg_frame, textvariable=self.var_primary_ssid, width=20).grid(row=1, column=1, sticky=tk.W, padx=4, pady=3)
 
-        ttk.Label(cfg_frame, text="WiFi Password:").grid(row=1, column=2, sticky=tk.W, padx=(16, 4), pady=3)
-        self.var_wifi_pass = tk.StringVar(value="hatdog123")
-        self.entry_wifi_pass = ttk.Entry(cfg_frame, textvariable=self.var_wifi_pass, show="*", width=32)
-        self.entry_wifi_pass.grid(row=1, column=3, sticky=tk.W, padx=4, pady=3)
+        ttk.Label(cfg_frame, text="Primary Password:").grid(row=1, column=2, sticky=tk.W, padx=(16, 4), pady=3)
+        self.var_primary_pass = tk.StringVar(value="ARVaLINK2_2026")
+        self.entry_primary_pass = ttk.Entry(cfg_frame, textvariable=self.var_primary_pass, show="*", width=32)
+        self.entry_primary_pass.grid(row=1, column=3, sticky=tk.W, padx=4, pady=3)
 
         self.var_show_pass = tk.BooleanVar(value=False)
         ttk.Checkbutton(cfg_frame, text="Show", variable=self.var_show_pass, command=self.toggle_show_pass).grid(row=1, column=4, sticky=tk.W, padx=2)
 
-        # Row 2: Backend URL
-        ttk.Label(cfg_frame, text="Backend URL:").grid(row=2, column=0, sticky=tk.W, padx=4, pady=3)
+        # Row 2: Fallback Wi-Fi (Priority 2)
+        ttk.Label(cfg_frame, text="Fallback Wi-Fi (P2):").grid(row=2, column=0, sticky=tk.W, padx=4, pady=3)
+        self.var_fallback_ssid = tk.StringVar(value="ArvaLink-1")
+        ttk.Entry(cfg_frame, textvariable=self.var_fallback_ssid, width=20).grid(row=2, column=1, sticky=tk.W, padx=4, pady=3)
+
+        ttk.Label(cfg_frame, text="Fallback Password:").grid(row=2, column=2, sticky=tk.W, padx=(16, 4), pady=3)
+        self.var_fallback_pass = tk.StringVar(value="ARVaLINK1_2026")
+        self.entry_fallback_pass = ttk.Entry(cfg_frame, textvariable=self.var_fallback_pass, show="*", width=32)
+        self.entry_fallback_pass.grid(row=2, column=3, sticky=tk.W, padx=4, pady=3)
+
+        # Row 3: Backend URL
+        ttk.Label(cfg_frame, text="Backend URL:").grid(row=3, column=0, sticky=tk.W, padx=4, pady=3)
         self.var_backend_url = tk.StringVar(value="https://api-aquaflow.gladwindr.me/api/v1")
-        ttk.Entry(cfg_frame, textvariable=self.var_backend_url, width=65).grid(row=2, column=1, columnspan=4, sticky=tk.W, padx=4, pady=3)
+        ttk.Entry(cfg_frame, textvariable=self.var_backend_url, width=65).grid(row=3, column=1, columnspan=4, sticky=tk.W, padx=4, pady=3)
 
-        # Row 3: Gateway Key
-        ttk.Label(cfg_frame, text="Gateway Key:").grid(row=3, column=0, sticky=tk.W, padx=4, pady=3)
+        # Row 4: Gateway Key
+        ttk.Label(cfg_frame, text="Gateway Key:").grid(row=4, column=0, sticky=tk.W, padx=4, pady=3)
         self.var_gateway_key = tk.StringVar(value="ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9")
-        ttk.Entry(cfg_frame, textvariable=self.var_gateway_key, width=65).grid(row=3, column=1, columnspan=4, sticky=tk.W, padx=4, pady=3)
+        ttk.Entry(cfg_frame, textvariable=self.var_gateway_key, width=65).grid(row=4, column=1, columnspan=4, sticky=tk.W, padx=4, pady=3)
 
-        # Row 4: Sensor & Calibration parameters
-        ttk.Label(cfg_frame, text="Datum Offset (cm):").grid(row=4, column=0, sticky=tk.W, padx=4, pady=3)
+        # Row 5: Sensor & Calibration parameters
+        ttk.Label(cfg_frame, text="Datum Offset (cm):").grid(row=5, column=0, sticky=tk.W, padx=4, pady=3)
         self.var_datum = tk.StringVar(value="20.0")
-        ttk.Entry(cfg_frame, textvariable=self.var_datum, width=12).grid(row=4, column=1, sticky=tk.W, padx=4, pady=3)
+        ttk.Entry(cfg_frame, textvariable=self.var_datum, width=12).grid(row=5, column=1, sticky=tk.W, padx=4, pady=3)
 
-        ttk.Label(cfg_frame, text="Soil Air ADC / Water ADC:").grid(row=4, column=2, sticky=tk.W, padx=(16, 4), pady=3)
+        ttk.Label(cfg_frame, text="Soil Air ADC / Water ADC:").grid(row=5, column=2, sticky=tk.W, padx=(16, 4), pady=3)
         cal_subframe = ttk.Frame(cfg_frame)
-        cal_subframe.grid(row=4, column=3, sticky=tk.W, padx=4, pady=3)
+        cal_subframe.grid(row=5, column=3, sticky=tk.W, padx=4, pady=3)
         self.var_soil_air = tk.StringVar(value="3200")
         self.var_soil_water = tk.StringVar(value="1500")
         ttk.Entry(cal_subframe, textvariable=self.var_soil_air, width=7).pack(side=tk.LEFT)
@@ -155,9 +165,10 @@ class ArvaNodeFlasherApp(tk.Tk):
 
         # Preset Save Actions
         cfg_btn_frame = ttk.Frame(cfg_frame)
-        cfg_btn_frame.grid(row=5, column=0, columnspan=5, sticky=tk.E, pady=(8, 2))
+        cfg_btn_frame.grid(row=6, column=0, columnspan=5, sticky=tk.E, pady=(8, 2))
         ttk.Button(cfg_btn_frame, text="💾 Update Current Preset", command=self.save_current_preset).pack(side=tk.RIGHT, padx=4)
         ttk.Button(cfg_btn_frame, text="📝 Export node_config.h", command=self.export_header_only).pack(side=tk.RIGHT, padx=4)
+
 
         # Action Controls
         act_frame = ttk.LabelFrame(content, text="3. Compile & Flash Operations", padding=10)
@@ -187,7 +198,9 @@ class ArvaNodeFlasherApp(tk.Tk):
         self.btn_flash.config(text=f"⚡ Flash {val}")
 
     def toggle_show_pass(self):
-        self.entry_wifi_pass.config(show="" if self.var_show_pass.get() else "*")
+        show_char = "" if self.var_show_pass.get() else "*"
+        self.entry_primary_pass.config(show=show_char)
+        self.entry_fallback_pass.config(show=show_char)
 
     def log(self, message):
         self.log_text.insert(tk.END, message + "\n")
@@ -225,8 +238,10 @@ class ArvaNodeFlasherApp(tk.Tk):
 
         self.var_node_id.set(cfg.logical_node_id)
         self.var_display_name.set(cfg.display_name)
-        self.var_wifi_ssid.set(cfg.network.wifi_ssid)
-        self.var_wifi_pass.set(cfg.network.wifi_password)
+        self.var_primary_ssid.set(cfg.network.primary_ssid)
+        self.var_primary_pass.set(cfg.network.primary_password)
+        self.var_fallback_ssid.set(cfg.network.fallback_ssid)
+        self.var_fallback_pass.set(cfg.network.fallback_password)
         self.var_backend_url.set(cfg.network.backend_base_url)
         self.var_gateway_key.set(cfg.network.gateway_key)
         self.var_datum.set(str(cfg.sensor.datum_offset_cm))
@@ -239,8 +254,10 @@ class ArvaNodeFlasherApp(tk.Tk):
     def get_current_config(self) -> NodeConfig:
         """Constructs an in-memory NodeConfig object directly from current form fields."""
         network = NetworkConfig(
-            wifi_ssid=self.var_wifi_ssid.get().strip(),
-            wifi_password=self.var_wifi_pass.get().strip(),
+            primary_ssid=self.var_primary_ssid.get().strip(),
+            primary_password=self.var_primary_pass.get().strip(),
+            fallback_ssid=self.var_fallback_ssid.get().strip(),
+            fallback_password=self.var_fallback_pass.get().strip(),
             backend_base_url=self.var_backend_url.get().strip(),
             gateway_key=self.var_gateway_key.get().strip()
         )
@@ -257,6 +274,7 @@ class ArvaNodeFlasherApp(tk.Tk):
             network=network,
             sensor=sensor
         )
+
 
     def save_current_preset(self):
         try:

@@ -84,11 +84,20 @@ class NodeProvisioner:
             "device_key": "",
             "status": "GENERATED",
             "network": {
-                "wifi_ssid": "Cream",
-                "wifi_password": "hatdog123",
+                "primary_ssid": "ArvaLink-2",
+                "primary_password": "ARVaLINK2_2026",
+                "fallback_ssid": "ArvaLink-1",
+                "fallback_password": "ARVaLINK1_2026",
+                "wifi_ssid": "ArvaLink-2",
+                "wifi_password": "ARVaLINK2_2026",
+                "networks": [
+                    {"ssid": "ArvaLink-2", "password": "ARVaLINK2_2026", "priority": 1},
+                    {"ssid": "ArvaLink-1", "password": "ARVaLINK1_2026", "priority": 2}
+                ],
                 "backend_base_url": "https://api-aquaflow.gladwindr.me/api/v1",
                 "gateway_key": "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9"
             },
+
             "sensor_config": {
                 "datum_offset_cm": 20.0,
                 "min_distance_cm": 2.0,
@@ -332,11 +341,16 @@ class NodeProvisioner:
 #define NODE_DEVICE_KEY "{profile.get('device_key', '')}"
 #define NODE_HARDWARE_MAC "{profile.get('hardware_mac', '')}"
 
-// Network Configuration
-#define NODE_WIFI_SSID "{network.get('wifi_ssid', 'Cream')}"
-#define NODE_WIFI_PASS "{network.get('wifi_password', 'hatdog123')}"
+// Network Configuration (Primary & Fallback Priority)
+#define NODE_PRIMARY_WIFI_SSID "{network.get('primary_ssid', network.get('wifi_ssid', 'ArvaLink-2'))}"
+#define NODE_PRIMARY_WIFI_PASS "{network.get('primary_password', network.get('wifi_password', 'ARVaLINK2_2026'))}"
+#define NODE_FALLBACK_WIFI_SSID "{network.get('fallback_ssid', 'ArvaLink-1')}"
+#define NODE_FALLBACK_WIFI_PASS "{network.get('fallback_password', 'ARVaLINK1_2026')}"
+#define NODE_WIFI_SSID "{network.get('primary_ssid', network.get('wifi_ssid', 'ArvaLink-2'))}"
+#define NODE_WIFI_PASS "{network.get('primary_password', network.get('wifi_password', 'ARVaLINK2_2026'))}"
 #define NODE_BACKEND_URL "{network.get('backend_base_url', 'https://api-aquaflow.gladwindr.me/api/v1')}"
 #define NODE_GATEWAY_KEY "{network.get('gateway_key', '')}"
+
 
 // Sensor Geometry & Timing
 #define NODE_DATUM_OFFSET_CM {sensor.get('datum_offset_cm', 20.0):.2f}f

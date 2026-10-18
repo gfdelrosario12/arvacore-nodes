@@ -10,10 +10,12 @@ Audit the 2.4 GHz RF environment around the ESP32 node and confirm station netwo
 ## Configuration
 Open `10_wifi_test.ino` and configure your local Wi-Fi credentials:
 ```cpp
-const char* TARGET_SSID = "Your_SSID_Here";
-const char* TARGET_PASS = "Your_Password_Here";
+const char* PRIMARY_SSID = "ArvaLink-2";
+const char* PRIMARY_PASS = "ARVaLINK2_2026";
+const char* FALLBACK_SSID = "ArvaLink-1";
+const char* FALLBACK_PASS = "ARVaLINK1_2026";
 ```
-*(Default configured to the ArvaNode deployment AP: `Cream`)*
+*(Default configured to the ArvaCore deployment APs: Primary `ArvaLink-2` / Fallback `ArvaLink-1`)*
 
 ## Critical RF & Security Principles
 - **2.4 GHz Only**: The ESP32 hardware radio supports only 2.4 GHz ISM band (Channels 1–13/14). It **cannot** detect or connect to 5 GHz or 6 GHz Wi-Fi networks. Ensure dual-band routers have 2.4 GHz enabled with a distinct or compatible SSID.
@@ -31,16 +33,17 @@ RESULT: Found 5 wireless networks.
 --------------------------------------------------------------------------------
 No.  | SSID                     | RSSI   | CH   | Security Protocol 
 --------------------------------------------------------------------------------
-1    | Cream                    |  -52 dB | 6    | WPA2-PSK          
-2    | HomeMesh_2G              |  -68 dB | 1    | WPA/WPA2-PSK      
+1    | ArvaLink-2               |  -52 dB | 6    | WPA2-PSK          
+2    | ArvaLink-1               |  -58 dB | 1    | WPA2-PSK          
 3    | Office_Guest             |  -84 dB | 11   | Open (No Security)
 ...
-TARGET AP CHECK   : Target SSID 'Cream' WAS DETECTED in RF scan.
+TARGET AP CHECK   : Target SSID 'ArvaLink-2' WAS DETECTED in RF scan.
 
 ================================================================================
   2. ATTEMPTING STATION CONNECTION
 ================================================================================
-CONNECTING TO     : Cream
+CONNECTING TO     : ArvaLink-2
+
 PASSWORD          : [PROTECTED / NOT PRINTED]
 TIMEOUT LIMIT     : 15000 ms
 ....

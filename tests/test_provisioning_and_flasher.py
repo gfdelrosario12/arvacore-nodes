@@ -94,7 +94,8 @@ class TestNodeProvisioner(unittest.TestCase):
 
         raw = self.prov.inspect_profile("ARVANODE-002", redact=False)
         self.assertFalse("****" in raw["device_key"])
-        self.assertEqual(raw["network"]["wifi_password"], "hatdog123")
+        self.assertEqual(raw["network"]["wifi_password"], "ARVaLINK2_2026")
+
 
     def test_validation_rules(self):
         """Test schema and rule invariants validation."""

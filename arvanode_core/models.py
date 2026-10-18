@@ -23,20 +23,77 @@ MAC_REGEX = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$")
 
 
 
+DEFAULT_PRIMARY_SSID = "ArvaLink-2"
+DEFAULT_PRIMARY_PASS = "ARVaLINK2_2026"
+DEFAULT_FALLBACK_SSID = "ArvaLink-1"
+DEFAULT_FALLBACK_PASS = "ARVaLINK1_2026"
+
+
+@dataclass(frozen=True)
+class WiFiNetworkConfig:
+    ssid: str
+    password: str
+    priority: int = 1
+
+    def validate(self) -> None:
+        if not self.ssid or not self.ssid.strip():
+            raise ConfigurationError("WiFi SSID cannot be empty.")
+        if self.priority < 1:
+            raise ConfigurationError(f"WiFi network priority must be >= 1 (got {self.priority}).")
+
+
 @dataclass(frozen=True)
 class NetworkConfig:
-    wifi_ssid: str = "Cream"
-    wifi_password: str = "hatdog123"
+    primary_ssid: str = DEFAULT_PRIMARY_SSID
+    primary_password: str = DEFAULT_PRIMARY_PASS
+    fallback_ssid: str = DEFAULT_FALLBACK_SSID
+    fallback_password: str = DEFAULT_FALLBACK_PASS
     backend_base_url: str = "https://api-aquaflow.gladwindr.me/api/v1"
     gateway_key: str = "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9"
 
+    def __init__(
+        self,
+        primary_ssid: Optional[str] = None,
+        primary_password: Optional[str] = None,
+        fallback_ssid: Optional[str] = None,
+        fallback_password: Optional[str] = None,
+        backend_base_url: str = "https://api-aquaflow.gladwindr.me/api/v1",
+        gateway_key: str = "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9",
+        wifi_ssid: Optional[str] = None,
+        wifi_password: Optional[str] = None,
+    ):
+        p_ssid = primary_ssid or wifi_ssid or DEFAULT_PRIMARY_SSID
+        p_pass = primary_password or wifi_password or DEFAULT_PRIMARY_PASS
+        f_ssid = fallback_ssid or DEFAULT_FALLBACK_SSID
+        f_pass = fallback_password or DEFAULT_FALLBACK_PASS
+
+        object.__setattr__(self, "primary_ssid", p_ssid)
+        object.__setattr__(self, "primary_password", p_pass)
+        object.__setattr__(self, "fallback_ssid", f_ssid)
+        object.__setattr__(self, "fallback_password", f_pass)
+        object.__setattr__(self, "backend_base_url", backend_base_url)
+        object.__setattr__(self, "gateway_key", gateway_key)
+
+    # Backward compatibility properties for legacy code expecting single wifi_ssid / wifi_password
+    @property
+    def wifi_ssid(self) -> str:
+        return self.primary_ssid
+
+    @property
+    def wifi_password(self) -> str:
+        return self.primary_password
+
+
     def validate(self) -> None:
-        if not self.wifi_ssid or not self.wifi_ssid.strip():
-            raise ConfigurationError("WiFi SSID cannot be empty.")
+        if not self.primary_ssid or not self.primary_ssid.strip():
+            raise ConfigurationError("Primary WiFi SSID cannot be empty.")
+        if not self.fallback_ssid or not self.fallback_ssid.strip():
+            raise ConfigurationError("Fallback WiFi SSID cannot be empty.")
         if not self.backend_base_url or not (
             self.backend_base_url.startswith("http://") or self.backend_base_url.startswith("https://")
         ):
             raise ConfigurationError(f"Invalid backend URL: '{self.backend_base_url}'. Must start with http:// or https://")
+
 
 
 @dataclass(frozen=True)
@@ -114,7 +171,20 @@ class NodeConfig:
             "device_key": self.device_key,
             "hardware_mac": self.hardware_mac,
             "status": self.status,
-            "network": asdict(self.network),
+            "network": {
+                "primary_ssid": self.network.primary_ssid,
+                "primary_password": self.network.primary_password,
+                "fallback_ssid": self.network.fallback_ssid,
+                "fallback_password": self.network.fallback_password,
+                "wifi_ssid": self.network.primary_ssid,
+                "wifi_password": self.network.primary_password,
+                "networks": [
+                    {"ssid": self.network.primary_ssid, "password": self.network.primary_password, "priority": 1},
+                    {"ssid": self.network.fallback_ssid, "password": self.network.fallback_password, "priority": 2}
+                ],
+                "backend_base_url": self.network.backend_base_url,
+                "gateway_key": self.network.gateway_key,
+            },
             "sensor_config": asdict(self.sensor),
             "pinout": asdict(self.pinout),
         }
@@ -125,12 +195,37 @@ class NodeConfig:
         sensor_raw = data.get("sensor_config", {})
         pin_raw = data.get("pinout", {})
 
+        # Parse networks array if present
+        networks_list = net_raw.get("networks", [])
+        primary_ssid = DEFAULT_PRIMARY_SSID
+        primary_pass = DEFAULT_PRIMARY_PASS
+        fallback_ssid = DEFAULT_FALLBACK_SSID
+        fallback_pass = DEFAULT_FALLBACK_PASS
+
+        if networks_list and isinstance(networks_list, list):
+            # Sort by priority ascending (1 = highest)
+            sorted_nets = sorted(networks_list, key=lambda n: n.get("priority", 999))
+            if len(sorted_nets) >= 1:
+                primary_ssid = sorted_nets[0].get("ssid", DEFAULT_PRIMARY_SSID)
+                primary_pass = sorted_nets[0].get("password", DEFAULT_PRIMARY_PASS)
+            if len(sorted_nets) >= 2:
+                fallback_ssid = sorted_nets[1].get("ssid", DEFAULT_FALLBACK_SSID)
+                fallback_pass = sorted_nets[1].get("password", DEFAULT_FALLBACK_PASS)
+        else:
+            primary_ssid = net_raw.get("primary_ssid") or net_raw.get("wifi_ssid") or DEFAULT_PRIMARY_SSID
+            primary_pass = net_raw.get("primary_password") or net_raw.get("wifi_password") or DEFAULT_PRIMARY_PASS
+            fallback_ssid = net_raw.get("fallback_ssid") or DEFAULT_FALLBACK_SSID
+            fallback_pass = net_raw.get("fallback_password") or DEFAULT_FALLBACK_PASS
+
         network = NetworkConfig(
-            wifi_ssid=net_raw.get("wifi_ssid", "Cream"),
-            wifi_password=net_raw.get("wifi_password", "hatdog123"),
+            primary_ssid=primary_ssid,
+            primary_password=primary_pass,
+            fallback_ssid=fallback_ssid,
+            fallback_password=fallback_pass,
             backend_base_url=net_raw.get("backend_base_url", "https://api-aquaflow.gladwindr.me/api/v1"),
             gateway_key=net_raw.get("gateway_key", "")
         )
+
 
         sensor = SensorConfig(
             datum_offset_cm=float(sensor_raw.get("datum_offset_cm", 20.0)),

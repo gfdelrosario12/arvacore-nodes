@@ -15,9 +15,12 @@
 //          4. Real endpoint test: GET /api/v1/pairing/status/{nodeId}
 // =============================================================================
 
-// Network Credentials
-const char* WIFI_SSID = "Cream";
-const char* WIFI_PASSWORD = "hatdog123";
+// Network Credentials (Primary: ArvaLink-2, Fallback: ArvaLink-1)
+const char* WIFI_SSID = "ArvaLink-2";
+const char* WIFI_PASSWORD = "ARVaLINK2_2026";
+const char* FALLBACK_WIFI_SSID = "ArvaLink-1";
+const char* FALLBACK_WIFI_PASSWORD = "ARVaLINK1_2026";
+
 
 // ArvaCore Real API Configuration
 const char* BACKEND_BASE_URL = "https://api-aquaflow.gladwindr.me/api/v1";

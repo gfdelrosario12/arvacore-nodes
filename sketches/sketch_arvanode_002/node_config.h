@@ -17,9 +17,13 @@
 #define NODE_DEVICE_KEY "dev_sec_67c3f4b5b6f18e4c9d5e7d0a03a1ef1da7d5aafc56dfe643e39083f5"
 #define NODE_HARDWARE_MAC ""
 
-// Network Configuration
-#define NODE_WIFI_SSID "Cream"
-#define NODE_WIFI_PASS "hatdog123"
+// Network Configuration (Primary & Fallback Priority)
+#define NODE_PRIMARY_WIFI_SSID "ArvaLink-2"
+#define NODE_PRIMARY_WIFI_PASS "ARVaLINK2_2026"
+#define NODE_FALLBACK_WIFI_SSID "ArvaLink-1"
+#define NODE_FALLBACK_WIFI_PASS "ARVaLINK1_2026"
+#define NODE_WIFI_SSID "ArvaLink-2"
+#define NODE_WIFI_PASS "ARVaLINK2_2026"
 #define NODE_BACKEND_URL "https://api-aquaflow.gladwindr.me/api/v1"
 #define NODE_GATEWAY_KEY "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9"
 

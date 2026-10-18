@@ -111,9 +111,27 @@ The firmware adheres to strict measurement truthfulness:
 
 ---
 
+## 5. Wi-Fi Configuration Standard & Connection Priority
+
+All ArvaNode devices, node profiles, firmware builds, and provisioning workflows follow a standardized multi-network connection hierarchy:
+
+| Priority | Role | SSID | Security Protocol | Notes |
+|:---:|:---|:---|:---|:---|
+| **1** | Primary Network | `ArvaLink-2` | WPA2-PSK (`ARVaLINK2_2026`) | Preferred deployment AP |
+| **2** | Fallback Network | `ArvaLink-1` | WPA2-PSK (`ARVaLINK1_2026`) | Automatic failover when primary is down |
+
+### Firmware Connection & Fallback Behavior
+1. **Boot Initialization**: At boot or audit check, the node activates `WIFI_STA` mode.
+2. **Primary Attempt**: The firmware always attempts `ArvaLink-2` first (7-second timeout limit).
+3. **Automatic Fallback**: If `ArvaLink-2` is unreachable or association fails, the node logs the status and automatically attempts `ArvaLink-1`.
+4. **Primary Recovery & Migration**: While operating on `ArvaLink-1`, the node non-blockingly checks if `ArvaLink-2` has returned (default: every 60 seconds) and migrates back to the primary network without disrupting sensor timing.
+5. **Credential Security**: Credentials are stored in firmware build headers and profiles, but **plain passwords are never emitted** in boot banners, serial logs, or telemetry payloads.
+
 ---
 
-## 5. Dynamic Node Provisioning & Identity Management
+
+## 6. Dynamic Node Provisioning & Identity Management
+
 
 ArvaCore replaces static, manual firmware modifications with a centralized provisioning system supporting up to **10 uniquely identified ESP32 nodes** (`ARVANODE-001` through `ARVANODE-010`):
 

@@ -12,12 +12,17 @@
 // ISOLATION NOTE: This test isolates RF and IP layers; NO backend calls are made.
 // =============================================================================
 
-// User-Configurable Network Credentials (Adjust for your local test environment)
-// Default set to the known ArvaNode local deployment AP
-const char* TARGET_SSID = "Cream";
-const char* TARGET_PASS = "hatdog123";
+// Standard ArvaCore Wi-Fi Credentials (Primary & Fallback Priority)
+const char* PRIMARY_SSID = "ArvaLink-2";
+const char* PRIMARY_PASS = "ARVaLINK2_2026";
+const char* FALLBACK_SSID = "ArvaLink-1";
+const char* FALLBACK_PASS = "ARVaLINK1_2026";
+
+const char* TARGET_SSID = PRIMARY_SSID;
+const char* TARGET_PASS = PRIMARY_PASS;
 
 constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
+
 
 void printHeader(const char* title) {
     Serial.println();

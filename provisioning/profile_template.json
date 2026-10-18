@@ -11,11 +11,28 @@
   "device_key": "sample_device_credential_placeholder",
   "status": "GENERATED",
   "network": {
-    "wifi_ssid": "Cream",
-    "wifi_password": "hatdog123",
+    "primary_ssid": "ArvaLink-2",
+    "primary_password": "ARVaLINK2_2026",
+    "fallback_ssid": "ArvaLink-1",
+    "fallback_password": "ARVaLINK1_2026",
+    "wifi_ssid": "ArvaLink-2",
+    "wifi_password": "ARVaLINK2_2026",
+    "networks": [
+      {
+        "ssid": "ArvaLink-2",
+        "password": "ARVaLINK2_2026",
+        "priority": 1
+      },
+      {
+        "ssid": "ArvaLink-1",
+        "password": "ARVaLINK1_2026",
+        "priority": 2
+      }
+    ],
     "backend_base_url": "https://api-aquaflow.gladwindr.me/api/v1",
     "gateway_key": "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9"
   },
+
   "sensor_config": {
     "datum_offset_cm": 20.0,
     "min_distance_cm": 2.0,

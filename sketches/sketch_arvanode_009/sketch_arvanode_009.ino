@@ -41,8 +41,19 @@
 // ---------------- NETWORK CONFIGURATION ----------------------
 
 #ifdef ARVA_CONFIG_INJECTED
-const char* WIFI_SSID = NODE_WIFI_SSID;
-const char* WIFI_PASSWORD = NODE_WIFI_PASS;
+#ifdef NODE_PRIMARY_WIFI_SSID
+const char* PRIMARY_WIFI_SSID = NODE_PRIMARY_WIFI_SSID;
+const char* PRIMARY_WIFI_PASSWORD = NODE_PRIMARY_WIFI_PASS;
+const char* FALLBACK_WIFI_SSID = NODE_FALLBACK_WIFI_SSID;
+const char* FALLBACK_WIFI_PASSWORD = NODE_FALLBACK_WIFI_PASS;
+#else
+const char* PRIMARY_WIFI_SSID = NODE_WIFI_SSID;
+const char* PRIMARY_WIFI_PASSWORD = NODE_WIFI_PASS;
+const char* FALLBACK_WIFI_SSID = "ArvaLink-1";
+const char* FALLBACK_WIFI_PASSWORD = "ARVaLINK1_2026";
+#endif
+const char* WIFI_SSID = PRIMARY_WIFI_SSID;
+const char* WIFI_PASSWORD = PRIMARY_WIFI_PASSWORD;
 const char* BACKEND_BASE_URL = NODE_BACKEND_URL;
 const char* GATEWAY_KEY = NODE_GATEWAY_KEY;
 
@@ -52,8 +63,13 @@ const char* PROVISIONED_FIRMWARE_VER = NODE_FIRMWARE_VERSION;
 const char* PROVISIONED_BUILD_ID = NODE_BUILD_ID;
 constexpr float SENSOR_DATUM_OFFSET_CM = NODE_DATUM_OFFSET_CM;
 #else
-const char* WIFI_SSID = "Cream";
-const char* WIFI_PASSWORD = "hatdog123";
+const char* PRIMARY_WIFI_SSID = "ArvaLink-2";
+const char* PRIMARY_WIFI_PASSWORD = "ARVaLINK2_2026";
+const char* FALLBACK_WIFI_SSID = "ArvaLink-1";
+const char* FALLBACK_WIFI_PASSWORD = "ARVaLINK1_2026";
+
+const char* WIFI_SSID = PRIMARY_WIFI_SSID;
+const char* WIFI_PASSWORD = PRIMARY_WIFI_PASSWORD;
 
 const char* BACKEND_BASE_URL =
     "https://api-aquaflow.gladwindr.me/api/v1";
@@ -67,6 +83,7 @@ const char* PROVISIONED_FIRMWARE_VER = "1.2.0";
 const char* PROVISIONED_BUILD_ID = "std-20261018";
 constexpr float SENSOR_DATUM_OFFSET_CM = 20.0f;
 #endif
+
 
 // ---------------- GPIO DEFINITIONS ---------------------------
 
@@ -323,53 +340,88 @@ void applyPairingState(PairingState newState) {
 }
 
 // ============================================================
-// WI-FI CONNECTIVITY
+// WI-FI CONNECTIVITY (PRIMARY & FALLBACK PRIORITY)
+//
+// Priority Policy:
+// 1. Always attempt Primary Wi-Fi (ArvaLink-2) first.
+// 2. If Primary is unavailable or fails, attempt Fallback (ArvaLink-1).
+// 3. Backoff retry tracking to avoid blocking loops.
+// 4. Periodically re-check availability of Primary if connected to Fallback.
+// 5. Passwords are NEVER printed or logged.
 // ============================================================
 
-bool connectWiFi() {
-    if (WiFi.status() == WL_CONNECTED) {
-        return true;
+const char* currentConnectedSsid = "";
+unsigned long lastPrimaryRetryMs = 0;
+constexpr unsigned long PRIMARY_RETRY_INTERVAL_MS = 60000; // Check for primary every 60s if on fallback
+constexpr unsigned long WIFI_ATTEMPT_TIMEOUT_MS = 7000;     // 7s per network attempt
+
+bool attemptConnectNetwork(const char* ssid, const char* pass, const char* label) {
+    if (!ssid || strlen(ssid) == 0) {
+        return false;
     }
 
-    action(String("Connecting to Wi-Fi: ") + WIFI_SSID);
-
+    action(String("Connecting to ") + label + " (" + ssid + ")...");
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.begin(ssid, pass);
 
     unsigned long start = millis();
-
-    while (
-        WiFi.status() != WL_CONNECTED &&
-        millis() - start < WIFI_TIMEOUT_MS
-    ) {
-        delay(250);
+    while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_ATTEMPT_TIMEOUT_MS) {
+        delay(200);
         Serial.print('.');
     }
-
     Serial.println();
 
     if (WiFi.status() == WL_CONNECTED) {
-        success(
-            String("Wi-Fi connected. IP: ") +
-            WiFi.localIP().toString()
-        );
-
-        Serial.printf(
-            "[WIFI] RSSI: %d dBm\n",
-            WiFi.RSSI()
-        );
-
+        currentConnectedSsid = ssid;
+        success(String(label) + " connected: " + ssid + " (IP: " + WiFi.localIP().toString() + ")");
+        Serial.printf("[WIFI] Active SSID: %s | RSSI: %d dBm | Channel: %d\n", ssid, WiFi.RSSI(), WiFi.channel());
         return true;
     }
 
-    errorLog("Wi-Fi connection failed.");
-    Serial.printf(
-        "[WIFI] Status code: %d\n",
-        (int)WiFi.status()
-    );
-
+    Serial.printf("[WIFI] %s (%s) connection attempt timed out or failed (status: %d).\n", label, ssid, (int)WiFi.status());
+    WiFi.disconnect(true);
+    delay(100);
     return false;
 }
+
+bool connectWiFi() {
+    unsigned long now = millis();
+
+    // If currently connected to Fallback, periodically test if Primary has recovered
+    if (WiFi.status() == WL_CONNECTED) {
+        if (strcmp(currentConnectedSsid, PRIMARY_WIFI_SSID) != 0) {
+            if (now - lastPrimaryRetryMs >= PRIMARY_RETRY_INTERVAL_MS) {
+                lastPrimaryRetryMs = now;
+                info("Currently on Fallback network. Checking if Primary Wi-Fi (" + String(PRIMARY_WIFI_SSID) + ") has become available...");
+                WiFi.disconnect(false);
+                delay(100);
+                if (attemptConnectNetwork(PRIMARY_WIFI_SSID, PRIMARY_WIFI_PASSWORD, "Primary Wi-Fi (P1)")) {
+                    return true;
+                }
+                // If primary still unavailable, reconnect to fallback
+                info("Primary still unavailable. Reconnecting to Fallback Wi-Fi...");
+                return attemptConnectNetwork(FALLBACK_WIFI_SSID, FALLBACK_WIFI_PASSWORD, "Fallback Wi-Fi (P2)");
+            }
+        }
+        return true;
+    }
+
+    // Step 1: Always attempt Primary Wi-Fi first
+    if (attemptConnectNetwork(PRIMARY_WIFI_SSID, PRIMARY_WIFI_PASSWORD, "Primary Wi-Fi (P1)")) {
+        return true;
+    }
+
+    // Step 2: Fallback to secondary Wi-Fi
+    warning("Primary Wi-Fi unavailable. Attempting Fallback Wi-Fi (P2)...");
+    if (attemptConnectNetwork(FALLBACK_WIFI_SSID, FALLBACK_WIFI_PASSWORD, "Fallback Wi-Fi (P2)")) {
+        lastPrimaryRetryMs = now;
+        return true;
+    }
+
+    errorLog("All Wi-Fi connection attempts failed (Primary: " + String(PRIMARY_WIFI_SSID) + ", Fallback: " + String(FALLBACK_WIFI_SSID) + ").");
+    return false;
+}
+
 
 // ============================================================
 // HTTPS INITIALIZATION

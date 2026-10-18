@@ -14,8 +14,11 @@
 // protocol if an external MQTT broker bridge is deployed.
 // =============================================================================
 
-const char* WIFI_SSID     = "Cream";
-const char* WIFI_PASSWORD = "hatdog123";
+const char* WIFI_SSID     = "ArvaLink-2";
+const char* WIFI_PASSWORD = "ARVaLINK2_2026";
+const char* FALLBACK_WIFI_SSID = "ArvaLink-1";
+const char* FALLBACK_WIFI_PASSWORD = "ARVaLINK1_2026";
+
 
 // MQTT Broker Configuration (Placeholders for manual bridge testing if used)
 const char* MQTT_BROKER   = "broker.emqx.io"; // Default public test broker for manual audit
