@@ -187,6 +187,14 @@ python3 scripts/esp32_flasher.py verify --port /dev/ttyUSB0 --expected-id ARVANO
 python3 scripts/esp32_flasher.py report
 ```
 
+### Provisioner & Flasher GUI Application
+
+A Tkinter GUI is available for compiling and flashing ArvaNodes with in-memory configuration overrides (WiFi credentials, backend URL, gateway key, calibration parameters) without needing to modify underlying JSON files:
+
+```bash
+python3 scripts/flasher_gui.py
+```
+
 ### Manual Bootloader Recovery Procedure
 If flashing halts with `A fatal error occurred: Failed to connect to ESP32: No serial data received`:
 1. Press and **HOLD** the `BOOT` button on the ESP32 development board.
@@ -208,14 +216,26 @@ If flashing halts with `A fatal error occurred: Failed to connect to ESP32: No s
 
 ---
 
-## 8. Automated Tooling & Integration Tests
+## 8. Modular Architecture (`arvanode_core`)
 
-Execute the automated test suite covering profile generation, duplicate rejection, 10-node limit enforcement, dry-run simulation, and hardware verification:
+The provisioning pipeline is decoupled into discrete, single-responsibility services:
+- **`arvanode_core.models`**: Canonical, immutable configuration models (`NodeConfig`, `NetworkConfig`, `SensorConfig`, `PinoutConfig`) providing schema validation and invariants.
+- **`arvanode_core.repository`**: `ProfileRepository` for managing optional preset profiles on disk. Profiles are configuration presets, not the execution engine.
+- **`arvanode_core.build_service`**: Stateless `BuildService` that writes `node_config.h` and invokes `arduino-cli compile` via controlled subprocesses.
+- **`arvanode_core.flash_service`**: Hardware-isolated `FlashService` for serial port discovery and `arduino-cli upload`.
+- **`arvanode_core.orchestrator`**: `ProvisioningOrchestrator` coordinating validation, compilation, port verification, and flashing with clean error propagation.
+
+---
+
+## 9. Automated Tooling & Integration Tests
+
+Execute the complete automated test suite covering configuration models, profile repository, build & flash services, orchestration, and CLI tools:
 
 ```bash
-# Run unit tests for provisioner and auto-flasher
-python3 -m unittest tests/test_provisioning_and_flasher.py
+# Run all unit and integration tests across the repository
+python3 -m unittest discover -s tests -v
 ```
-*Result: 15 / 15 tests passing cleanly (`OK`).*
+*Result: 31 / 31 tests passing cleanly (`OK`).*
+
 
 

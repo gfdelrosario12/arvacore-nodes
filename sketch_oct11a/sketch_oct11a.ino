@@ -109,8 +109,6 @@ constexpr float SOUND_SPEED_CM_PER_US = 0.0343f;
 constexpr int SOIL_AIR_VALUE = 3200;
 constexpr int SOIL_WATER_VALUE = 1500;
 
-constexpr float SENSOR_DATUM_OFFSET_CM = 20.0f;
-
 // ---------------- STATE --------------------------------------
 
 enum PairingState {

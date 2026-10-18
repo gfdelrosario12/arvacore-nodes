@@ -172,10 +172,8 @@ class Esp32Flasher:
 
         print(f"[BUILD] Compiling firmware for '{node_id}' (FQBN: {self.fqbn})...")
         try:
-            # We set HOME to /tmp if ~/.arduino15 is read-only
             env = dict(os.environ)
-            if "HOME" not in env or not os.access(env["HOME"], os.W_OK):
-                env["HOME"] = "/tmp"
+
 
             proc = subprocess.run(
                 build_cmd,
