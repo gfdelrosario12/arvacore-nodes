@@ -22,3 +22,8 @@ __pycache__/
 venv/
 ENV/
 
+# Editor and IDE directories
+.vscode/
+.pio/
+
+

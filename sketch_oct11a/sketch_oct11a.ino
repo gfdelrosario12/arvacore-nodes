@@ -52,8 +52,8 @@ const char* PROVISIONED_FIRMWARE_VER = NODE_FIRMWARE_VERSION;
 const char* PROVISIONED_BUILD_ID = NODE_BUILD_ID;
 constexpr float SENSOR_DATUM_OFFSET_CM = NODE_DATUM_OFFSET_CM;
 #else
-const char* WIFI_SSID = "Cream";
-const char* WIFI_PASSWORD = "hatdog123";
+const char* WIFI_SSID = "ZTE_2.4G_uyNei6";
+const char* WIFI_PASSWORD = "gtgu3zaw";
 
 const char* BACKEND_BASE_URL =
     "https://api-aquaflow.gladwindr.me/api/v1";
