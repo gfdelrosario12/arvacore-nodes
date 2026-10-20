@@ -5,6 +5,9 @@
 #include <Preferences.h>
 #include "esp_system.h"
 #include "esp_mac.h"
+#include "mbedtls/md.h"
+#include "mbedtls/sha256.h"
+#include <time.h>
 
 // ============================================================
 // ARVACORE / ARVANODE SENSOR NODE FIRMWARE
@@ -57,6 +60,12 @@ const char* WIFI_PASSWORD = PRIMARY_WIFI_PASSWORD;
 const char* BACKEND_BASE_URL = NODE_BACKEND_URL;
 const char* GATEWAY_KEY = NODE_GATEWAY_KEY;
 
+#ifdef NODE_DEVICE_KEY
+const char* BOOTSTRAP_DEVICE_KEY = NODE_DEVICE_KEY;
+#else
+const char* BOOTSTRAP_DEVICE_KEY = "";
+#endif
+
 const char* PROVISIONED_NODE_ID = NODE_LOGICAL_ID;
 const char* PROVISIONED_DISPLAY_NAME = NODE_DISPLAY_NAME;
 const char* PROVISIONED_FIRMWARE_VER = NODE_FIRMWARE_VERSION;
@@ -76,6 +85,9 @@ const char* BACKEND_BASE_URL =
 
 const char* GATEWAY_KEY =
     "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9";
+
+const char* BOOTSTRAP_DEVICE_KEY =
+    "dev_sec_e62959d17ffe8ad6f98246918bd61fa4e87b7b8963cf44cc15cb5c18";
 
 const char* PROVISIONED_NODE_ID = "";
 const char* PROVISIONED_DISPLAY_NAME = "ArvaNode Default";
@@ -139,6 +151,10 @@ Preferences prefs;
 
 String nodeId;
 String macAddress;
+
+String storedOperationalKeyId = "";
+String storedOperationalSecret = "";
+long storedPairingRequestId = 0;
 
 PairingState pairingState = PAIRING_UNVERIFIED;
 
@@ -375,6 +391,9 @@ bool attemptConnectNetwork(const char* ssid, const char* pass, const char* label
         currentConnectedSsid = ssid;
         success(String(label) + " connected: " + ssid + " (IP: " + WiFi.localIP().toString() + ")");
         Serial.printf("[WIFI] Active SSID: %s | RSSI: %d dBm | Channel: %d\n", ssid, WiFi.RSSI(), WiFi.channel());
+        if (time(nullptr) < 1700000000) {
+            syncDeviceTime();
+        }
         return true;
     }
 
@@ -481,6 +500,311 @@ bool extractJsonString(
     if (secondQuote < 0) return false;
 
     output = body.substring(firstQuote + 1, secondQuote);
+    return true;
+}
+
+bool extractJsonNumber(const String& body, const char* key, long& output) {
+    String searchKey = String("\"") + key + "\"";
+    int keyPos = body.indexOf(searchKey);
+    if (keyPos < 0) return false;
+    int colonPos = body.indexOf(':', keyPos + searchKey.length());
+    if (colonPos < 0) return false;
+    int start = colonPos + 1;
+    while (start < (int)body.length() && (body[start] == ' ' || body[start] == '\t' || body[start] == '\n' || body[start] == '\r')) {
+        start++;
+    }
+    int end = start;
+    while (end < (int)body.length() && ((body[end] >= '0' && body[end] <= '9') || body[end] == '-')) {
+        end++;
+    }
+    if (end > start) {
+        output = body.substring(start, end).toInt();
+        return true;
+    }
+    return false;
+}
+
+bool extractJsonBool(const String& body, const char* key, bool& output) {
+    String searchKey = String("\"") + key + "\"";
+    int keyPos = body.indexOf(searchKey);
+    if (keyPos < 0) return false;
+    int colonPos = body.indexOf(':', keyPos + searchKey.length());
+    if (colonPos < 0) return false;
+    int start = colonPos + 1;
+    while (start < (int)body.length() && (body[start] == ' ' || body[start] == '\t' || body[start] == '\n' || body[start] == '\r')) {
+        start++;
+    }
+    if (body.substring(start, start + 4) == "true") {
+        output = true;
+        return true;
+    } else if (body.substring(start, start + 5) == "false") {
+        output = false;
+        return true;
+    }
+    return false;
+}
+
+// ============================================================
+// DEVICE AUTHENTICATION & HMAC CONTRACT (ARVA-HMAC-V1)
+// ============================================================
+
+void syncDeviceTime() {
+    info("Synchronizing device time via SNTP...");
+    configTime(0, 0, "pool.ntp.org", "time.google.com", "time.nist.gov");
+    time_t now = time(nullptr);
+    unsigned long start = millis();
+    while (now < 1700000000 && (millis() - start < 6000)) {
+        delay(250);
+        now = time(nullptr);
+    }
+    if (now >= 1700000000) {
+        Serial.printf("[NTP] Device time synchronized: epoch %ld\n", (long)now);
+    } else {
+        warning("SNTP time synchronization pending or timed out; will retry on next connection.");
+    }
+}
+
+void clearOperationalCredentials() {
+    storedOperationalKeyId = "";
+    storedOperationalSecret = "";
+    storedPairingRequestId = 0;
+    prefs.remove("op_key_id");
+    prefs.remove("op_secret");
+    prefs.remove("pairing_req_id");
+    prefs.putBool("paired", false);
+    isPairedAndApproved = false;
+    info("Cleared device operational credentials from Preferences.");
+}
+
+String computeSha256Hex(const String& payload) {
+    uint8_t hash[32];
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0); // 0 = SHA-256
+    mbedtls_sha256_update(&ctx, (const unsigned char*)payload.c_str(), payload.length());
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+
+    char hexStr[65];
+    for (int i = 0; i < 32; i++) {
+        sprintf(hexStr + (i * 2), "%02x", hash[i]);
+    }
+    hexStr[64] = '\0';
+    return String(hexStr);
+}
+
+String base64UrlEncode(const uint8_t* data, size_t length) {
+    static const char base64url_chars[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    String result = "";
+    int i = 0;
+    int j = 0;
+    uint8_t char_array_3[3];
+    uint8_t char_array_4[4];
+
+    while (length--) {
+        char_array_3[i++] = *(data++);
+        if (i == 3) {
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+
+            for (i = 0; (i < 4); i++)
+                result += base64url_chars[char_array_4[i]];
+            i = 0;
+        }
+    }
+
+    if (i) {
+        for (j = i; j < 3; j++)
+            char_array_3[j] = '\0';
+
+        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+        char_array_4[3] = char_array_3[2] & 0x3f;
+
+        for (j = 0; (j < i + 1); j++)
+            result += base64url_chars[char_array_4[j]];
+    }
+
+    return result;
+}
+
+String computeHmacSha256Base64Url(const String& key, const String& data) {
+    uint8_t hmacResult[32];
+    mbedtls_md_context_t ctx;
+    mbedtls_md_init(&ctx);
+    mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+    mbedtls_md_hmac_starts(&ctx, (const unsigned char*)key.c_str(), key.length());
+    mbedtls_md_hmac_update(&ctx, (const unsigned char*)data.c_str(), data.length());
+    mbedtls_md_hmac_finish(&ctx, hmacResult);
+    mbedtls_md_free(&ctx);
+    return base64UrlEncode(hmacResult, 32);
+}
+
+void signAndAttachDeviceAuthHeaders(
+    HTTPClient& http,
+    const String& method,
+    const String& requestPath,
+    const String& payload,
+    const String& customKeyId = "",
+    const String& customSecret = ""
+) {
+    time_t nowSec = time(nullptr);
+    String timestamp = String((long)nowSec);
+    String nonce = String(esp_random(), HEX) + String(millis(), HEX);
+
+    String keyId = customKeyId;
+    String secret = customSecret;
+
+    if (keyId.length() == 0) {
+        if (storedOperationalKeyId.length() > 0 && storedOperationalSecret.length() > 0 && isPairedAndApproved) {
+            keyId = storedOperationalKeyId;
+            secret = storedOperationalSecret;
+        } else {
+            keyId = "BOOTSTRAP-" + nodeId;
+            secret = BOOTSTRAP_DEVICE_KEY;
+        }
+    }
+
+    String bodyHash = computeSha256Hex(payload);
+
+    String canonicalRequest = "ARVA-HMAC-V1\n" +
+        method + "\n" +
+        requestPath + "\n" +
+        bodyHash + "\n" +
+        timestamp + "\n" +
+        nonce + "\n" +
+        nodeId + "\n" +
+        keyId;
+
+    String signature = computeHmacSha256Base64Url(secret, canonicalRequest);
+
+    http.addHeader("X-Arva-Node-ID", nodeId);
+    http.addHeader("X-Arva-Key-ID", keyId);
+    http.addHeader("X-Arva-Timestamp", timestamp);
+    http.addHeader("X-Arva-Nonce", nonce);
+    http.addHeader("X-Arva-Signature", signature);
+
+    Serial.printf("[DEVICE-AUTH] Signed %s %s with %s (nonce=%s)\n",
+        method.c_str(), requestPath.c_str(), keyId.c_str(), nonce.c_str());
+}
+
+bool provisionAndCompletePairing(long reqId) {
+    if (reqId <= 0) {
+        errorLog("Invalid pairing request ID for provisioning: " + String(reqId));
+        return false;
+    }
+
+    printSection("OPERATIONAL PROVISIONING");
+    info("Requesting operational credentials for pairing request #" + String(reqId));
+
+    WiFiClientSecure client;
+    HTTPClient http;
+    String path = "/api/v1/pairing/requests/" + String(reqId) + "/provision";
+    String url = String("https://api-aquaflow.gladwindr.me") + path;
+
+    if (!beginSecureHttp(http, client, url)) {
+        errorLog("Failed to initialize provisioning HTTP request.");
+        return false;
+    }
+
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Accept", "application/json");
+
+    // Sign with bootstrap key
+    signAndAttachDeviceAuthHeaders(
+        http,
+        "POST",
+        path,
+        "",
+        "BOOTSTRAP-" + nodeId,
+        BOOTSTRAP_DEVICE_KEY
+    );
+
+    int httpCode = http.POST("");
+    String response = httpCode > 0 ? http.getString() : "";
+    http.end();
+
+    Serial.printf("[PROVISION] HTTP status: %d\n", httpCode);
+    if (response.length() > 0) {
+        Serial.printf("[PROVISION] Response: %s\n", response.c_str());
+    }
+
+    if (httpCode < 200 || httpCode >= 300) {
+        errorLog("Operational credential provisioning failed with HTTP " + String(httpCode));
+        return false;
+    }
+
+    String opKeyId, opSecret, provToken;
+    if (!extractJsonString(response, "operationalKeyId", opKeyId) ||
+        !extractJsonString(response, "operationalSecret", opSecret) ||
+        !extractJsonString(response, "provisioningToken", provToken)) {
+        errorLog("Provisioning response missing required credential fields.");
+        return false;
+    }
+
+    opKeyId.trim();
+    opSecret.trim();
+    provToken.trim();
+
+    info("Provisioning credentials received. Storing to non-volatile preferences...");
+    storedOperationalKeyId = opKeyId;
+    storedOperationalSecret = opSecret;
+    prefs.putString("op_key_id", storedOperationalKeyId);
+    prefs.putString("op_secret", storedOperationalSecret);
+
+    // Now prove possession: POST /api/v1/pairing/requests/{reqId}/complete signed with operational credential
+    printSection("PAIRING COMPLETION HANDSHAKE");
+    info("Proving possession of operational credential to backend...");
+
+    WiFiClientSecure completeClient;
+    HTTPClient completeHttp;
+    String completePath = "/api/v1/pairing/requests/" + String(reqId) + "/complete";
+    String completeUrl = String("https://api-aquaflow.gladwindr.me") + completePath;
+
+    if (!beginSecureHttp(completeHttp, completeClient, completeUrl)) {
+        errorLog("Failed to initialize completion HTTP request.");
+        return false;
+    }
+
+    completeHttp.addHeader("Content-Type", "application/json");
+    completeHttp.addHeader("Accept", "application/json");
+
+    String completePayload = "{\"provisioningToken\":\"" + provToken + "\"}";
+
+    // Sign with new OPERATIONAL key!
+    signAndAttachDeviceAuthHeaders(
+        completeHttp,
+        "POST",
+        completePath,
+        completePayload,
+        storedOperationalKeyId,
+        storedOperationalSecret
+    );
+
+    int completeCode = completeHttp.POST(completePayload);
+    String completeResp = completeCode > 0 ? completeHttp.getString() : "";
+    completeHttp.end();
+
+    Serial.printf("[COMPLETE] HTTP status: %d\n", completeCode);
+    if (completeResp.length() > 0) {
+        Serial.printf("[COMPLETE] Response: %s\n", completeResp.c_str());
+    }
+
+    if (completeCode < 200 || completeCode >= 300) {
+        errorLog("Pairing completion failed with HTTP " + String(completeCode));
+        return false;
+    }
+
+    applyPairingState(PAIRING_APPROVED);
+    isPairedAndApproved = true;
+    isWaitingForPairing = false;
+    prefs.putBool("paired", true);
+    success("Node successfully provisioned, verified, and paired!");
+    flashPairingLed(1);
     return true;
 }
 
@@ -755,9 +1079,8 @@ bool verifyBackendPairingStatus() {
 
     printSection("BACKEND PAIRING STATUS CHECK");
 
-    String url =
-        String(BACKEND_BASE_URL) +
-        "/pairing/status/" + nodeId;
+    String path = "/api/v1/pairing/devices/" + nodeId + "/status";
+    String url = String("https://api-aquaflow.gladwindr.me") + path;
 
     Serial.printf("[PAIRING CHECK] GET %s\n", url.c_str());
 
@@ -771,6 +1094,9 @@ bool verifyBackendPairingStatus() {
     }
 
     http.addHeader("Accept", "application/json");
+
+    // Sign device status request with ARVA-HMAC-V1
+    signAndAttachDeviceAuthHeaders(http, "GET", path, "");
 
     int httpCode = http.GET();
 
@@ -804,8 +1130,7 @@ bool verifyBackendPairingStatus() {
 
     if (httpCode == 404) {
         errorLog(
-            "Node not found (HTTP 404). Verify registration "
-            "and the status endpoint."
+            "Node not found (HTTP 404). Node is unregistered or requires pairing."
         );
         applyPairingState(PAIRING_UNVERIFIED);
         return false;
@@ -822,32 +1147,42 @@ bool verifyBackendPairingStatus() {
 
     String responseNodeId;
     String status;
+    String action;
 
-    if (
-        !extractJsonString(response, "nodeId", responseNodeId) ||
-        !extractJsonString(response, "pairingStatus", status)
-    ) {
-        errorLog(
-            "Missing nodeId or pairingStatus in JSON response."
-        );
-        applyPairingState(PAIRING_UNVERIFIED);
-        return false;
+    extractJsonString(response, "action", action);
+    action.trim();
+    action.toUpperCase();
+
+    if (extractJsonString(response, "nodeId", responseNodeId)) {
+        responseNodeId.trim();
+        if (responseNodeId != nodeId) {
+            errorLog("Node ID mismatch. Authorization denied.");
+            applyPairingState(PAIRING_UNVERIFIED);
+            return false;
+        }
     }
 
-    responseNodeId.trim();
+    if (!extractJsonString(response, "pairingStatus", status)) {
+        extractJsonString(response, "status", status);
+    }
     status.trim();
     status.toUpperCase();
 
-    if (responseNodeId != nodeId) {
-        errorLog("Node ID mismatch. Authorization denied.");
-        applyPairingState(PAIRING_UNVERIFIED);
-        return false;
+    if (status == "APPROVED" || status == "PAIRED" || status == "ALREADY_PAIRED" || action == "RESUME_OPERATION") {
+        applyPairingState(PAIRING_APPROVED);
+        isPairedAndApproved = true;
+        isWaitingForPairing = false;
+        prefs.putBool("paired", true);
+        success("Backend confirms pairing active (status: " + status + ", action: " + action + ").");
+        return true;
     }
 
-    if (status == "APPROVED") {
-        applyPairingState(PAIRING_APPROVED);
-        success("Backend confirms pairing APPROVED.");
-        return true;
+    if (status == "PROVISIONING") {
+        info("Pairing is in PROVISIONING state. Requesting operational credentials...");
+        long reqId = 0;
+        extractJsonNumber(response, "id", reqId);
+        if (reqId <= 0) reqId = storedPairingRequestId;
+        return provisionAndCompletePairing(reqId);
     }
 
     if (status == "PENDING") {
@@ -857,8 +1192,9 @@ bool verifyBackendPairingStatus() {
     }
 
     if (status == "REJECTED" || status == "REVOKED" || status == "EXPIRED") {
-        warning("Pairing was rejected, revoked, or expired.");
+        warning("Pairing was rejected, revoked, or expired. Clearing local credentials.");
         applyPairingState(PAIRING_REJECTED);
+        clearOperationalCredentials();
         return false;
     }
 
@@ -965,8 +1301,8 @@ void requestPairing() {
     WiFiClientSecure client;
     HTTPClient http;
 
-    String url =
-        String(BACKEND_BASE_URL) + "/pairing/request";
+    String path = "/api/v1/pairing/requests";
+    String url = String("https://api-aquaflow.gladwindr.me") + path;
 
     if (!beginSecureHttp(http, client, url)) {
         pairingFailures++;
@@ -984,6 +1320,16 @@ void requestPairing() {
     payload += "\"hardwareModel\":\"ESP32-WROOM-32\",";
     payload += "\"firmwareVersion\":\"" + String(PROVISIONED_FIRMWARE_VER) + "\"";
     payload += "}";
+
+    // Sign device pairing request with bootstrap key (ARVA-HMAC-V1)
+    signAndAttachDeviceAuthHeaders(
+        http,
+        "POST",
+        path,
+        payload,
+        "BOOTSTRAP-" + nodeId,
+        BOOTSTRAP_DEVICE_KEY
+    );
 
     Serial.printf("[PAIRING] POST %s\n", url.c_str());
     Serial.printf("[PAIRING] Payload: %s\n", payload.c_str());
@@ -1032,40 +1378,61 @@ void requestPairing() {
 
     String returnedNode;
     String status;
+    String action;
+    bool isPaired = false;
+    long reqId = 0;
 
-    if (
-        !extractJsonString(response, "nodeId", returnedNode) ||
-        !extractJsonString(response, "pairingStatus", status)
-    ) {
-        pairingFailures++;
-        errorLog(
-            "Pairing response missing nodeId or pairingStatus."
-        );
-        flashPairingLed(3);
-        return;
+    extractJsonString(response, "action", action);
+    action.trim();
+    action.toUpperCase();
+
+    extractJsonBool(response, "paired", isPaired);
+    extractJsonNumber(response, "id", reqId);
+    if (reqId > 0) {
+        storedPairingRequestId = reqId;
+        prefs.putLong("pairing_req_id", reqId);
     }
 
-    returnedNode.trim();
+    if (!extractJsonString(response, "pairingStatus", status)) {
+        extractJsonString(response, "status", status);
+    }
     status.trim();
     status.toUpperCase();
 
-    if (returnedNode != nodeId) {
-        pairingFailures++;
-        errorLog("Pairing response node ID mismatch.");
-        flashPairingLed(3);
+    if (extractJsonString(response, "nodeId", returnedNode)) {
+        returnedNode.trim();
+        if (returnedNode != nodeId) {
+            pairingFailures++;
+            errorLog("Pairing response node ID mismatch.");
+            flashPairingLed(3);
+            return;
+        }
+    }
+
+    // MANDATORY ALREADY-PAIRED DETECTION & AUTOMATIC RECOVERY
+    if (status == "ALREADY_PAIRED" || action == "RESUME_OPERATION" || isPaired) {
+        pairingSuccesses++;
+        applyPairingState(PAIRING_APPROVED);
+        isPairedAndApproved = true;
+        isWaitingForPairing = false;
+        prefs.putBool("paired", true);
+
+        success("Automatic pairing recovery: Node is already active, authenticated, and paired in the backend.");
+        flashPairingLed(1);
+        info("Press Activation to run the hardware audit and resume monitoring.");
         return;
     }
 
-    if (status == "APPROVED") {
+    if (status == "APPROVED" || status == "PROVISIONING") {
         pairingSuccesses++;
-        applyPairingState(PAIRING_APPROVED);
-
-        success("Backend approved this node.");
-        flashPairingLed(1);
-
-        info(
-            "Press Activation to run the audit and start monitoring."
-        );
+        info("Pairing approved by administrator. Executing operational credential provisioning handshake...");
+        if (provisionAndCompletePairing(storedPairingRequestId > 0 ? storedPairingRequestId : reqId)) {
+            success("Operational provisioning completed successfully.");
+            flashPairingLed(1);
+        } else {
+            pairingFailures++;
+            flashPairingLed(3);
+        }
         return;
     }
 
@@ -1077,7 +1444,8 @@ void requestPairing() {
         lastPairingPollMs = millis();
 
         warning(
-            "Pairing is pending administrator approval. Waiting and checking automatically..."
+            "Pairing request registered (ID: " + String(storedPairingRequestId) +
+            "). Waiting for administrator approval in ArvaLink..."
         );
         return;
     }
@@ -1085,6 +1453,7 @@ void requestPairing() {
     if (status == "REJECTED" || status == "REVOKED" || status == "EXPIRED") {
         pairingFailures++;
         applyPairingState(PAIRING_REJECTED);
+        clearOperationalCredentials();
 
         errorLog("Backend rejected, revoked, or expired pairing.");
         flashPairingLed(3);
@@ -1136,9 +1505,8 @@ bool sendTelemetry(
     WiFiClientSecure client;
     HTTPClient http;
 
-    String url =
-        String(BACKEND_BASE_URL) +
-        "/telemetry/uplink/" + nodeId;
+    String telemetryPath = "/api/v1/telemetry/uplink/" + nodeId;
+    String url = String("https://api-aquaflow.gladwindr.me") + telemetryPath;
 
     if (!beginSecureHttp(http, client, url)) {
         isSendingTelemetry = false;
@@ -1150,6 +1518,9 @@ bool sendTelemetry(
 
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Accept", "application/json");
+    if (strlen(GATEWAY_KEY) > 0) {
+        http.addHeader("X-ArvaCore-Gateway-Key", GATEWAY_KEY);
+    }
 
     telemetrySequence++;
     telemetryAttempts++;
@@ -1186,6 +1557,9 @@ bool sendTelemetry(
     }
 
     payload += "}}";
+
+    // Attach operational HMAC credentials (ARVA-HMAC-V1)
+    signAndAttachDeviceAuthHeaders(http, "POST", telemetryPath, payload);
 
     Serial.printf(
         "[TELEMETRY] Sequence #%lu\n",
@@ -1247,7 +1621,8 @@ bool sendTelemetry(
 
     if (httpCode == 401 || httpCode == 403 ||
         (httpCode == 400 && (response.indexOf("NODE_NOT_ACTIVE") >= 0 || response.indexOf("REVOKED") >= 0 || response.indexOf("UNREGISTERED") >= 0))) {
-        warning("Node has been revoked or unpaired by backend. Clearing pairing state.");
+        warning("Node has been revoked or unpaired by backend. Clearing pairing state and operational credentials.");
+        clearOperationalCredentials();
         applyPairingState(PAIRING_REJECTED);
         flashPairingLed(3);
     }
@@ -1509,9 +1884,13 @@ void handlePairingButton() {
             }
 
             if (isPairedAndApproved) {
-                info("Device is already paired and approved.");
-                flashPairingLed(1);
-                return;
+                info("Device marked paired locally. Verifying with backend...");
+                if (verifyBackendPairingStatus()) {
+                    info("Backend confirms device is already active and paired.");
+                    flashPairingLed(1);
+                    return;
+                }
+                info("Backend indicates pairing update required. Submitting request...");
             }
 
             if (isWaitingForPairing) {
@@ -1596,6 +1975,12 @@ void setup() {
 
     pairingState = PAIRING_UNVERIFIED;
     isPairedAndApproved = prefs.getBool("paired", false);
+    storedOperationalKeyId = prefs.getString("op_key_id", "");
+    storedOperationalSecret = prefs.getString("op_secret", "");
+    storedPairingRequestId = prefs.getLong("pairing_req_id", 0);
+    if (isPairedAndApproved) {
+        pairingState = PAIRING_APPROVED;
+    }
 
     prefs.putBool("active", false);
 
