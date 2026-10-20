@@ -13,6 +13,7 @@ from .repository import ProfileRepository, MAX_PROFILES
 from .build_service import BuildService, BuildResult
 from .flash_service import FlashService, FlashResult
 from .orchestrator import ProvisioningOrchestrator, ProvisioningResult
+from .serial_monitor import SerialMonitor, discover_esp32_ports
 
 __all__ = [
     "NodeConfig",
@@ -27,4 +28,6 @@ __all__ = [
     "FlashResult",
     "ProvisioningOrchestrator",
     "ProvisioningResult",
+    "SerialMonitor",
+    "discover_esp32_ports",
 ]

@@ -30,6 +30,13 @@ except ImportError:
     MAX_PROFILES = 10
 
 REPO_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    from arvanode_core.serial_monitor import SerialMonitor, discover_esp32_ports
+except ImportError:
+    SerialMonitor = None
+    discover_esp32_ports = None
 SKETCH_DIR = REPO_ROOT / "sketch_oct11a"
 SKETCH_FILE = SKETCH_DIR / "sketch_oct11a.ino"
 CONFIG_HEADER = SKETCH_DIR / "node_config.h"
@@ -333,25 +340,43 @@ class Esp32Flasher:
         verified_id = None
         verified_mac = None
 
-        start_time = time.time()
         try:
-            # Configure port baud using stty
-            subprocess.run(["stty", "-F", port, str(MONITOR_BAUD), "raw", "-echo"], check=False)
-            with open(port, "r", errors="replace") as ser:
-                while time.time() - start_time < timeout:
-                    line = ser.readline()
-                    if line:
-                        captured.append(line.strip())
-                        if "[BOOT] Node ID:" in line:
-                            match = re.search(r"\[BOOT\] Node ID:\s*([A-Za-z0-9_\-]+)", line)
-                            if match:
-                                verified_id = match.group(1).strip()
-                        if "[BOOT] MAC:" in line:
-                            match = re.search(r"\[BOOT\] MAC:\s*([0-9A-Fa-f:]+)", line)
-                            if match:
-                                verified_mac = match.group(1).strip()
+            if SerialMonitor is not None:
+                with SerialMonitor(port=port, baudrate=MONITOR_BAUD) as mon:
+                    mon.reset_esp32()
+                    start_time = time.time()
+                    while time.time() - start_time < timeout:
+                        lines = mon.read_lines(timeout_sec=0.25)
+                        for line in lines:
+                            captured.append(line.strip())
+                            if "[BOOT] Node ID:" in line:
+                                match = re.search(r"\[BOOT\] Node ID:\s*([A-Za-z0-9_\-]+)", line)
+                                if match:
+                                    verified_id = match.group(1).strip()
+                            if "[BOOT] MAC:" in line:
+                                match = re.search(r"\[BOOT\] MAC:\s*([0-9A-Fa-f:]+)", line)
+                                if match:
+                                    verified_mac = match.group(1).strip()
                         if verified_id and (not expected_node_id or verified_id == expected_node_id):
                             break
+            else:
+                start_time = time.time()
+                subprocess.run(["stty", "-F", port, str(MONITOR_BAUD), "raw", "-echo"], check=False)
+                with open(port, "r", errors="replace") as ser:
+                    while time.time() - start_time < timeout:
+                        line = ser.readline()
+                        if line:
+                            captured.append(line.strip())
+                            if "[BOOT] Node ID:" in line:
+                                match = re.search(r"\[BOOT\] Node ID:\s*([A-Za-z0-9_\-]+)", line)
+                                if match:
+                                    verified_id = match.group(1).strip()
+                            if "[BOOT] MAC:" in line:
+                                match = re.search(r"\[BOOT\] MAC:\s*([0-9A-Fa-f:]+)", line)
+                                if match:
+                                    verified_mac = match.group(1).strip()
+                            if verified_id and (not expected_node_id or verified_id == expected_node_id):
+                                break
         except Exception as e:
             return {
                 "success": False,
@@ -379,6 +404,19 @@ class Esp32Flasher:
                 "error": f"No boot banner detected within {timeout}s.",
                 "logs": captured
             }
+
+    def open_monitor(self, port=None, baud=MONITOR_BAUD, show_timestamps=True, colorize=True, auto_reset=True):
+        """
+        Launches the dedicated standalone serial monitor without requiring Arduino.
+        """
+        if SerialMonitor is None:
+            raise RuntimeError("SerialMonitor could not be loaded from arvanode_core.")
+        mon = SerialMonitor(port=port, baudrate=baud)
+        mon.run_console(
+            show_timestamps=show_timestamps,
+            colorize=colorize,
+            auto_reset_on_start=auto_reset
+        )
 
     def generate_report(self):
         profiles = self.prov.list_profiles()
@@ -415,6 +453,7 @@ def main():
     fls_p.add_argument("--id", required=True, help="Logical Node ID (e.g. ARVANODE-001)")
     fls_p.add_argument("--port", help="Serial port (e.g. /dev/ttyUSB0)")
     fls_p.add_argument("--baud", type=int, default=DEFAULT_BAUD, help=f"Upload baud rate (default: {DEFAULT_BAUD})")
+    fls_p.add_argument("--monitor", action="store_true", help="Launch dedicated serial monitor immediately after flashing")
     fls_p.add_argument("--dry-run", action="store_true", help="Simulate flashing command")
 
     # provision
@@ -423,7 +462,16 @@ def main():
     prv_p.add_argument("--name", help="Display name (optional)")
     prv_p.add_argument("--port", help="Serial port (e.g. /dev/ttyUSB0)")
     prv_p.add_argument("--baud", type=int, default=DEFAULT_BAUD, help=f"Upload baud rate (default: {DEFAULT_BAUD})")
+    prv_p.add_argument("--monitor", action="store_true", help="Launch dedicated serial monitor immediately after flashing")
     prv_p.add_argument("--dry-run", action="store_true", help="Simulate provisioning and flashing")
+
+    # monitor
+    mon_p = subparsers.add_parser("monitor", help="Launch dedicated standalone serial monitor (no Arduino needed)")
+    mon_p.add_argument("--port", help="Serial port (e.g. /dev/ttyUSB0). Auto-detects if omitted.")
+    mon_p.add_argument("--baud", type=int, default=MONITOR_BAUD, help=f"Baud rate (default: {MONITOR_BAUD})")
+    mon_p.add_argument("--no-timestamps", action="store_true", help="Disable timestamp prefixes")
+    mon_p.add_argument("--no-color", action="store_true", help="Disable ANSI colorized output")
+    mon_p.add_argument("--no-reset", action="store_true", help="Do not pulse EN reset line upon opening")
 
     # verify
     vrf_p = subparsers.add_parser("verify", help="Verify device boot banner on serial port")
@@ -463,6 +511,10 @@ def main():
 
     elif args.command == "flash":
         res = flasher.flash_device(args.id, port=args.port, baud=args.baud, dry_run=args.dry_run)
+        if res["success"] and getattr(args, "monitor", False) and not args.dry_run:
+            target_port = res.get("port") or args.port
+            print(f"\n[POST-FLASH] Launching dedicated serial monitor on {target_port}...")
+            flasher.open_monitor(port=target_port)
         return 0 if res["success"] else 1
 
     elif args.command == "provision":
@@ -474,7 +526,21 @@ def main():
             print(f"[PROVISION] Generated {args.id} ({profile['display_name']}).")
 
         res = flasher.flash_device(args.id, port=args.port, baud=args.baud, dry_run=args.dry_run)
+        if res["success"] and getattr(args, "monitor", False) and not args.dry_run:
+            target_port = res.get("port") or args.port
+            print(f"\n[POST-FLASH] Launching dedicated serial monitor on {target_port}...")
+            flasher.open_monitor(port=target_port)
         return 0 if res["success"] else 1
+
+    elif args.command == "monitor":
+        flasher.open_monitor(
+            port=args.port,
+            baud=args.baud,
+            show_timestamps=not args.no_timestamps,
+            colorize=not args.no_color,
+            auto_reset=not args.no_reset
+        )
+        return 0
 
     elif args.command == "verify":
         res = flasher.verify_boot(args.port, expected_node_id=args.expected_id, timeout=args.timeout, dry_run=args.dry_run)
