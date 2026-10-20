@@ -70,13 +70,18 @@ stateDiagram-v2
    - **Audit Result Indication (LED 1)**:
      - **1 Blink**: All hardware components functional; node transitions to `ACTIVATED`.
      - **3 Blinks**: Hardware sensor failure, disconnected probe, or out-of-range sensor detection.
-2. **Pairing Button (`GPIO 23`) & Pairing Lifecycle**:
-   - Initiates a hardware pairing request to the ArvaCore gateway / backend.
+2. **Pairing Button (`GPIO 23`) & Pairing Lifecycle (`ARVA-HMAC-V1`)**:
+   - Initiates a hardware pairing request to the ArvaCore backend pairing bridge (`POST /api/v1/pairing/requests`) signed with the node's bootstrap secret.
+   - **Automatic Pairing Recovery**: If the node is already active and paired in the backend, the backend immediately responds with `status: ALREADY_PAIRED`, `action: RESUME_OPERATION`, and `paired: true`. The firmware detects this, preserves pairing, flashes LED 2 once, and resumes telemetry immediately without needing redundant admin approval.
+   - **Two-Tier Device Authentication (`ARVA-HMAC-V1`)**:
+     - *Bootstrap Key*: Factory secret used for initial handshake, status polling, and operational key provisioning.
+     - *Operational Key*: Dynamically provisioned 256-bit key returned upon administrator approval in ArvaLink (`POST /api/v1/pairing/requests/{id}/provision`). Verified via proof-of-possession completion handshake (`POST /api/v1/pairing/requests/{id}/complete`) and persisted in ESP32 `Preferences` (NVS).
+   - **SNTP Time Synchronization**: Syncs with network time (`pool.ntp.org`, `time.google.com`) upon Wi-Fi connection to satisfy the $\pm 120\text{s}$ freshness window.
    - **Permanent Accepted Pairings**: Once accepted by the operator, pairings persist indefinitely across node deep sleep, power cycles, and network disconnects.
-   - **30-Minute Pending Expiration**: Unaccepted pairing requests strictly expire after 30 minutes, after which the node clears pending credentials and signals expiration.
-   - **Remote Unpairing & Revocation Handling**: If an operator forcefully unpairs the node via the backend API/UI (`DELETE /api/v1/nodes/{nodeId}/pairing`), subsequent telemetry uplinks (HTTP 401/403/`NODE_NOT_ACTIVE`/`REVOKED`) automatically trigger firmware unpairing: local credentials are purged, the node reverts to an unverified state, LED 2 flashes 3 times, and further telemetry is halted until a new pairing sequence is approved.
+   - **30-Minute Pending Expiration**: Unaccepted pending pairing requests strictly expire after 30 minutes. Retries during the window reuse the active pending request.
+   - **Remote Unpairing & Revocation Handling**: If an operator unpairs the node via the backend API/UI (`POST /api/v1/nodes/{nodeId}/unpair`), subsequent telemetry uplinks (HTTP 401/403/`DEVICE_CREDENTIAL_REVOKED`) automatically trigger firmware unpairing: local credentials and keys are purged from NVS, the node reverts to unverified standby, LED 2 flashes 3 times, and further telemetry is halted until a new pairing sequence is approved.
    - **Pairing Feedback (LED 2)**:
-     - **1 Blink**: Pairing approved by administrator or active pairing session confirmed.
+     - **1 Blink**: Pairing approved by administrator or active pairing session confirmed (`ALREADY_PAIRED`).
      - **3 Blinks**: Pairing failed, rejected, expired (30m window elapsed), or revoked.
 3. **Mandatory 3-Second Telemetry Policy**:
    - In active operational mode, the node samples and transmits telemetry every **3 seconds** (`TELEMETRY_INTERVAL_MS = 3000UL`).
