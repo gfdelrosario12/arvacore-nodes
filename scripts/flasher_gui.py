@@ -150,11 +150,11 @@ class ArvaNodeFlasherApp(tk.Tk):
 
         # Row 1: Primary Wi-Fi (Priority 1)
         ttk.Label(cfg_frame, text="Primary Wi-Fi (P1):").grid(row=1, column=0, sticky=tk.W, padx=4, pady=3)
-        self.var_primary_ssid = tk.StringVar(value="ArvaLink-2")
+        self.var_primary_ssid = tk.StringVar(value="ZTE_2.4G_5gKub")
         ttk.Entry(cfg_frame, textvariable=self.var_primary_ssid, width=20).grid(row=1, column=1, sticky=tk.W, padx=4, pady=3)
 
         ttk.Label(cfg_frame, text="Primary Password:").grid(row=1, column=2, sticky=tk.W, padx=(16, 4), pady=3)
-        self.var_primary_pass = tk.StringVar(value="ARVaLINK2_2026")
+        self.var_primary_pass = tk.StringVar(value="H0meDLR$2025")
         self.entry_primary_pass = ttk.Entry(cfg_frame, textvariable=self.var_primary_pass, show="*", width=32)
         self.entry_primary_pass.grid(row=1, column=3, sticky=tk.W, padx=4, pady=3)
 
@@ -163,11 +163,11 @@ class ArvaNodeFlasherApp(tk.Tk):
 
         # Row 2: Fallback Wi-Fi (Priority 2)
         ttk.Label(cfg_frame, text="Fallback Wi-Fi (P2):").grid(row=2, column=0, sticky=tk.W, padx=4, pady=3)
-        self.var_fallback_ssid = tk.StringVar(value="ArvaLink-1")
+        self.var_fallback_ssid = tk.StringVar(value="ZTE_2.4G_5gKub")
         ttk.Entry(cfg_frame, textvariable=self.var_fallback_ssid, width=20).grid(row=2, column=1, sticky=tk.W, padx=4, pady=3)
 
         ttk.Label(cfg_frame, text="Fallback Password:").grid(row=2, column=2, sticky=tk.W, padx=(16, 4), pady=3)
-        self.var_fallback_pass = tk.StringVar(value="ARVaLINK1_2026")
+        self.var_fallback_pass = tk.StringVar(value="H0meDLR$2025")
         self.entry_fallback_pass = ttk.Entry(cfg_frame, textvariable=self.var_fallback_pass, show="*", width=32)
         self.entry_fallback_pass.grid(row=2, column=3, sticky=tk.W, padx=4, pady=3)
 

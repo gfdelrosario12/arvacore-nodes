@@ -11,21 +11,21 @@
   "device_key": "sample_device_credential_placeholder",
   "status": "GENERATED",
   "network": {
-    "primary_ssid": "ArvaLink-2",
-    "primary_password": "ARVaLINK2_2026",
-    "fallback_ssid": "ArvaLink-1",
-    "fallback_password": "ARVaLINK1_2026",
-    "wifi_ssid": "ArvaLink-2",
-    "wifi_password": "ARVaLINK2_2026",
+    "primary_ssid": "ZTE_2.4G_5gKub",
+    "primary_password": "H0meDLR$2025",
+    "fallback_ssid": "ZTE_2.4G_5gKub",
+    "fallback_password": "H0meDLR$2025",
+    "wifi_ssid": "ZTE_2.4G_5gKub",
+    "wifi_password": "H0meDLR$2025",
     "networks": [
       {
-        "ssid": "ArvaLink-2",
-        "password": "ARVaLINK2_2026",
+        "ssid": "ZTE_2.4G_5gKub",
+        "password": "H0meDLR$2025",
         "priority": 1
       },
       {
-        "ssid": "ArvaLink-1",
-        "password": "ARVaLINK1_2026",
+        "ssid": "ZTE_2.4G_5gKub",
+        "password": "H0meDLR$2025",
         "priority": 2
       }
     ],

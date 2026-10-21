@@ -84,15 +84,15 @@ class NodeProvisioner:
             "device_key": "",
             "status": "GENERATED",
             "network": {
-                "primary_ssid": "ArvaLink-2",
-                "primary_password": "ARVaLINK2_2026",
-                "fallback_ssid": "ArvaLink-1",
-                "fallback_password": "ARVaLINK1_2026",
-                "wifi_ssid": "ArvaLink-2",
-                "wifi_password": "ARVaLINK2_2026",
+                "primary_ssid": "ZTE_2.4G_5gKub",
+                "primary_password": "H0meDLR$2025",
+                "fallback_ssid": "ZTE_2.4G_5gKub",
+                "fallback_password": "H0meDLR$2025",
+                "wifi_ssid": "ZTE_2.4G_5gKub",
+                "wifi_password": "H0meDLR$2025",
                 "networks": [
-                    {"ssid": "ArvaLink-2", "password": "ARVaLINK2_2026", "priority": 1},
-                    {"ssid": "ArvaLink-1", "password": "ARVaLINK1_2026", "priority": 2}
+                    {"ssid": "ZTE_2.4G_5gKub", "password": "H0meDLR$2025", "priority": 1},
+                    {"ssid": "ZTE_2.4G_5gKub", "password": "H0meDLR$2025", "priority": 2}
                 ],
                 "backend_base_url": "https://api-aquaflow.gladwindr.me/api/v1",
                 "gateway_key": "ed630e681ef735f36954469b48f832f210286246ca95fff62e62086cab74e8a9"
