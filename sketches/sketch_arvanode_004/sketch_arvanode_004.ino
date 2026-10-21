@@ -41,22 +41,16 @@
 #include "node_config.h"
 #endif
 
-// ---------------- NETWORK CONFIGURATION ----------------------
+// ============================================================
+// MANUAL WI-FI CONFIGURATION (EDIT DIRECTLY HERE)
+// Simple single-network connection — no fallback switching.
+// ============================================================
+const char* WIFI_SSID     = "ZTE_2.4G_5gKub";
+const char* WIFI_PASSWORD = "H0meDLR$2025";
+
+// ---------------- NETWORK & IDENTITY CONFIGURATION ----------
 
 #ifdef ARVA_CONFIG_INJECTED
-#ifdef NODE_PRIMARY_WIFI_SSID
-const char* PRIMARY_WIFI_SSID = NODE_PRIMARY_WIFI_SSID;
-const char* PRIMARY_WIFI_PASSWORD = NODE_PRIMARY_WIFI_PASS;
-const char* FALLBACK_WIFI_SSID = NODE_FALLBACK_WIFI_SSID;
-const char* FALLBACK_WIFI_PASSWORD = NODE_FALLBACK_WIFI_PASS;
-#else
-const char* PRIMARY_WIFI_SSID = NODE_WIFI_SSID;
-const char* PRIMARY_WIFI_PASSWORD = NODE_WIFI_PASS;
-const char* FALLBACK_WIFI_SSID = "ZTE_2.4G_5gKub";
-const char* FALLBACK_WIFI_PASSWORD = "H0meDLR$2025";
-#endif
-const char* WIFI_SSID = PRIMARY_WIFI_SSID;
-const char* WIFI_PASSWORD = PRIMARY_WIFI_PASSWORD;
 const char* BACKEND_BASE_URL = NODE_BACKEND_URL;
 const char* GATEWAY_KEY = NODE_GATEWAY_KEY;
 
@@ -72,14 +66,6 @@ const char* PROVISIONED_FIRMWARE_VER = NODE_FIRMWARE_VERSION;
 const char* PROVISIONED_BUILD_ID = NODE_BUILD_ID;
 constexpr float SENSOR_DATUM_OFFSET_CM = NODE_DATUM_OFFSET_CM;
 #else
-const char* PRIMARY_WIFI_SSID = "ZTE_2.4G_5gKub";
-const char* PRIMARY_WIFI_PASSWORD = "H0meDLR$2025";
-const char* FALLBACK_WIFI_SSID = "ZTE_2.4G_5gKub";
-const char* FALLBACK_WIFI_PASSWORD = "H0meDLR$2025";
-
-const char* WIFI_SSID = PRIMARY_WIFI_SSID;
-const char* WIFI_PASSWORD = PRIMARY_WIFI_PASSWORD;
-
 const char* BACKEND_BASE_URL =
     "https://api-aquaflow.gladwindr.me/api/v1";
 
@@ -356,88 +342,51 @@ void applyPairingState(PairingState newState) {
 }
 
 // ============================================================
-// WI-FI CONNECTIVITY (PRIMARY & FALLBACK PRIORITY)
-//
-// Priority Policy:
-// 1. Always attempt Primary Wi-Fi (ArvaLink-2) first.
-// 2. If Primary is unavailable or fails, attempt Fallback (ArvaLink-1).
-// 3. Backoff retry tracking to avoid blocking loops.
-// 4. Periodically re-check availability of Primary if connected to Fallback.
-// 5. Passwords are NEVER printed or logged.
+// WI-FI CONNECTIVITY (SIMPLE DIRECT CONNECTION — NO FALLBACKS)
 // ============================================================
 
-const char* currentConnectedSsid = "";
-unsigned long lastPrimaryRetryMs = 0;
-constexpr unsigned long PRIMARY_RETRY_INTERVAL_MS = 60000; // Check for primary every 60s if on fallback
-constexpr unsigned long WIFI_ATTEMPT_TIMEOUT_MS = 7000;     // 7s per network attempt
+constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000; // 20s timeout
 
-bool attemptConnectNetwork(const char* ssid, const char* pass, const char* label) {
-    if (!ssid || strlen(ssid) == 0) {
-        return false;
+bool connectWiFi() {
+    if (WiFi.status() == WL_CONNECTED) {
+        return true;
     }
 
-    action(String("Connecting to ") + label + " (" + ssid + ")...");
+    action(String("Connecting to Wi-Fi (") + WIFI_SSID + ")...");
+
     WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, pass);
+    WiFi.setSleep(false);
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_ATTEMPT_TIMEOUT_MS) {
-        delay(200);
+    while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
+        delay(500);
         Serial.print('.');
     }
     Serial.println();
 
     if (WiFi.status() == WL_CONNECTED) {
-        currentConnectedSsid = ssid;
-        success(String(label) + " connected: " + ssid + " (IP: " + WiFi.localIP().toString() + ")");
-        Serial.printf("[WIFI] Active SSID: %s | RSSI: %d dBm | Channel: %d\n", ssid, WiFi.RSSI(), WiFi.channel());
+        success(
+            String("Wi-Fi connected: ") + WIFI_SSID +
+            " (IP: " + WiFi.localIP().toString() + ")"
+        );
+        Serial.printf(
+            "[WIFI] Active SSID: %s | RSSI: %d dBm | Channel: %d\n",
+            WIFI_SSID,
+            WiFi.RSSI(),
+            WiFi.channel()
+        );
         if (time(nullptr) < 1700000000) {
             syncDeviceTime();
         }
         return true;
     }
 
-    Serial.printf("[WIFI] %s (%s) connection attempt timed out or failed (status: %d).\n", label, ssid, (int)WiFi.status());
-    WiFi.disconnect(true);
-    delay(100);
-    return false;
-}
-
-bool connectWiFi() {
-    unsigned long now = millis();
-
-    // If currently connected to Fallback, periodically test if Primary has recovered
-    if (WiFi.status() == WL_CONNECTED) {
-        if (strcmp(currentConnectedSsid, PRIMARY_WIFI_SSID) != 0) {
-            if (now - lastPrimaryRetryMs >= PRIMARY_RETRY_INTERVAL_MS) {
-                lastPrimaryRetryMs = now;
-                info("Currently on Fallback network. Checking if Primary Wi-Fi (" + String(PRIMARY_WIFI_SSID) + ") has become available...");
-                WiFi.disconnect(false);
-                delay(100);
-                if (attemptConnectNetwork(PRIMARY_WIFI_SSID, PRIMARY_WIFI_PASSWORD, "Primary Wi-Fi (P1)")) {
-                    return true;
-                }
-                // If primary still unavailable, reconnect to fallback
-                info("Primary still unavailable. Reconnecting to Fallback Wi-Fi...");
-                return attemptConnectNetwork(FALLBACK_WIFI_SSID, FALLBACK_WIFI_PASSWORD, "Fallback Wi-Fi (P2)");
-            }
-        }
-        return true;
-    }
-
-    // Step 1: Always attempt Primary Wi-Fi first
-    if (attemptConnectNetwork(PRIMARY_WIFI_SSID, PRIMARY_WIFI_PASSWORD, "Primary Wi-Fi (P1)")) {
-        return true;
-    }
-
-    // Step 2: Fallback to secondary Wi-Fi
-    warning("Primary Wi-Fi unavailable. Attempting Fallback Wi-Fi (P2)...");
-    if (attemptConnectNetwork(FALLBACK_WIFI_SSID, FALLBACK_WIFI_PASSWORD, "Fallback Wi-Fi (P2)")) {
-        lastPrimaryRetryMs = now;
-        return true;
-    }
-
-    errorLog("All Wi-Fi connection attempts failed (Primary: " + String(PRIMARY_WIFI_SSID) + ", Fallback: " + String(FALLBACK_WIFI_SSID) + ").");
+    errorLog(
+        String("Wi-Fi connection failed for SSID '") + WIFI_SSID +
+        "' (status: " + String((int)WiFi.status()) + ")."
+    );
     return false;
 }
 
@@ -2047,6 +1996,9 @@ void setup() {
         "[BOOT] Backend: %s\n",
         BACKEND_BASE_URL
     );
+
+    printSection("INITIAL WI-FI CONNECTION");
+    connectWiFi();
 
     printSection("BUTTON INITIALIZATION");
 
