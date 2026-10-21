@@ -172,6 +172,10 @@ unsigned long telemetryAttempts = 0;
 unsigned long telemetrySuccesses = 0;
 unsigned long telemetryFailures = 0;
 
+String currentSoilHealth = "UNKNOWN";
+String currentUltrasonicHealth = "UNKNOWN";
+String currentTelemetryStatus = "UNKNOWN";
+
 // Button debounce state
 int lastActivateReading = HIGH;
 int activateStableState = HIGH;
@@ -686,8 +690,8 @@ bool provisionAndCompletePairing(long reqId) {
         "POST",
         path,
         "",
-        "BOOTSTRAP-" + nodeId,
-        BOOTSTRAP_DEVICE_KEY
+        "bootstrap-" + nodeId,
+        resolveBootstrapDeviceKey(nodeId)
     );
 
     int httpCode = http.POST("");
@@ -869,33 +873,59 @@ float soilPercentFromADC(int adcValue) {
     return percentage;
 }
 
-bool checkSoilSensor(int& rawADC, float& percentage) {
+bool checkSoilSensor(int& rawADC, float& percentage, String& healthStatus) {
     printSection("SOIL SENSOR FUNCTIONAL CHECK");
 
     rawADC = readSoilADC();
 
     if (rawADC < 0) {
-        percentage = -1.0f;
-        errorLog("SOIL RESULT: FAIL - No ADC samples.");
+        percentage = 0.0f;
+        healthStatus = "ERROR";
+        errorLog("SOIL RESULT: FAIL - No ADC samples (using fallback 0.00%).");
         return false;
     }
-
-    percentage = soilPercentFromADC(rawADC);
 
     // Do not use moisture percentage as a hardware health test.
     // Only report obvious electrical rail conditions as failures.
     bool electricalResponse =
         rawADC > 10 && rawADC < 4085;
 
+    if (!electricalResponse) {
+        percentage = 0.0f;
+        healthStatus = (rawADC <= 10 || rawADC >= 4085) ? "DISCONNECTED" : "ERROR";
+        Serial.printf(
+            "[SOIL RESULT] ADC=%d, fallback moisture=0.00%%, "
+            "electrical check=FAIL (%s)\n",
+            rawADC,
+            healthStatus.c_str()
+        );
+        return false;
+    }
+
+    percentage = soilPercentFromADC(rawADC);
+    if (!isfinite(percentage) || percentage < 0.0f) {
+        percentage = 0.0f;
+        healthStatus = "ERROR";
+        return false;
+    }
+    if (percentage > 100.0f) {
+        percentage = 100.0f;
+    }
+    healthStatus = "OK";
+
     Serial.printf(
         "[SOIL RESULT] ADC=%d, estimated moisture=%.2f%%, "
-        "electrical check=%s\n",
+        "electrical check=PASS (OK)\n",
         rawADC,
-        percentage,
-        electricalResponse ? "PASS" : "FAIL"
+        percentage
     );
 
-    return electricalResponse;
+    return true;
+}
+
+bool checkSoilSensor(int& rawADC, float& percentage) {
+    String unusedHealth;
+    return checkSoilSensor(rawADC, percentage, unusedHealth);
 }
 
 // ============================================================
@@ -946,10 +976,11 @@ bool measureUltrasonicSingle(
     return true;
 }
 
-bool readUltrasonicAverage(float& result) {
+bool readUltrasonicAverage(float& result, String& healthStatus) {
     float total = 0.0f;
     uint8_t valid = 0;
     uint8_t timeouts = 0;
+    uint8_t invalidPulses = 0;
 
     float minimum = MAX_DISTANCE_CM;
     float maximum = MIN_DISTANCE_CM;
@@ -980,12 +1011,17 @@ bool readUltrasonicAverage(float& result) {
                 distance
             );
         } else {
-            timeouts++;
+            if (duration == 0) {
+                timeouts++;
+            } else {
+                invalidPulses++;
+            }
 
             Serial.printf(
                 "[ULTRASONIC] Sample %u: FAIL - "
-                "no valid echo or out-of-range pulse\n",
-                i + 1
+                "no valid echo or out-of-range pulse (duration=%lu us)\n",
+                i + 1,
+                duration
             );
         }
 
@@ -994,22 +1030,30 @@ bool readUltrasonicAverage(float& result) {
 
     Serial.printf(
         "[ULTRASONIC] Valid samples: %u/%u, "
-        "timeouts/invalid: %u\n",
+        "timeouts: %u, invalid: %u\n",
         valid,
         ULTRASONIC_SAMPLES,
-        timeouts
+        timeouts,
+        invalidPulses
     );
 
     if (valid == 0) {
+        result = 0.0f;
+        healthStatus = (timeouts == ULTRASONIC_SAMPLES) ? "TIMEOUT" : "ERROR";
         errorLog(
-            "ULTRASONIC RESULT: FAIL. Check sensor power, "
-            "GND, TRIG GPIO 5, ECHO GPIO 18, voltage divider, "
-            "and target placement."
+            "ULTRASONIC RESULT: FAIL (" + healthStatus + "). Reporting fallback 0.00 cm. "
+            "Check sensor power, GND, TRIG GPIO 5, ECHO GPIO 18, voltage divider, and target placement."
         );
         return false;
     }
 
     result = total / valid;
+    if (!isfinite(result) || result < 0.0f) {
+        result = 0.0f;
+        healthStatus = "ERROR";
+        return false;
+    }
+    healthStatus = "OK";
 
     Serial.printf(
         "[ULTRASONIC] Average=%.2f cm, spread=%.2f cm\n",
@@ -1029,6 +1073,11 @@ bool readUltrasonicAverage(float& result) {
     }
 
     return true;
+}
+
+bool readUltrasonicAverage(float& result) {
+    String unusedHealth;
+    return readUltrasonicAverage(result, unusedHealth);
 }
 
 // ============================================================
@@ -1197,17 +1246,31 @@ bool runActivationAudit() {
     );
 
     int soilADC = -1;
-    float soilPercent = -1.0f;
+    float soilPercent = 0.0f;
+    String soilHealth = "UNKNOWN";
 
     bool soilOk = checkSoilSensor(
         soilADC,
-        soilPercent
+        soilPercent,
+        soilHealth
     );
 
     float distanceCm = 0.0f;
+    String ultrasonicHealth = "UNKNOWN";
     bool ultrasonicOk = readUltrasonicAverage(
-        distanceCm
+        distanceCm,
+        ultrasonicHealth
     );
+
+    currentSoilHealth = soilHealth;
+    currentUltrasonicHealth = ultrasonicHealth;
+    if (soilOk && ultrasonicOk) {
+        currentTelemetryStatus = "OK";
+    } else if (soilOk || ultrasonicOk) {
+        currentTelemetryStatus = "PARTIAL_FAILURE";
+    } else {
+        currentTelemetryStatus = "SENSOR_FAILURE";
+    }
 
     printSection("AUDIT SUMMARY");
 
@@ -1217,35 +1280,37 @@ bool runActivationAudit() {
     );
 
     Serial.printf(
-        "[AUDIT] Soil ADC:          %s\n",
-        soilOk ? "PASS" : "FAIL"
+        "[AUDIT] Soil ADC:          %s (%s)\n",
+        soilOk ? "PASS" : "FAIL",
+        soilHealth.c_str()
     );
 
     Serial.printf(
-        "[AUDIT] Ultrasonic echo:   %s\n",
-        ultrasonicOk ? "PASS" : "FAIL"
+        "[AUDIT] Ultrasonic echo:   %s (%s)\n",
+        ultrasonicOk ? "PASS" : "FAIL",
+        ultrasonicHealth.c_str()
     );
 
-    bool allGood = wifiOk && soilOk && ultrasonicOk;
-
     Serial.printf(
-        "[AUDIT] OVERALL:           %s\n",
-        allGood ? "PASS" : "FAIL"
+        "[AUDIT] TELEMETRY STATUS:  %s\n",
+        currentTelemetryStatus.c_str()
     );
 
     if (!soilOk) {
         warning(
-            "Soil sensor did not pass the electrical check."
+            "Soil sensor check failed (" + soilHealth + "); node will transmit numeric 0.00% with sensorHealth=" + soilHealth + "."
         );
     }
 
     if (!ultrasonicOk) {
         warning(
-            "Ultrasonic sensor did not return a valid echo."
+            "Ultrasonic sensor check failed (" + ultrasonicHealth + "); node will transmit numeric 0.00 cm with sensorHealth=" + ultrasonicHealth + "."
         );
     }
 
-    return allGood;
+    // Individual sensor failures must NEVER block node activation or telemetry loop.
+    // Only Wi-Fi connectivity is required to transmit telemetry to the backend.
+    return wifiOk;
 }
 
 // ============================================================
@@ -1293,8 +1358,8 @@ void requestPairing() {
         "POST",
         path,
         payload,
-        "BOOTSTRAP-" + nodeId,
-        BOOTSTRAP_DEVICE_KEY
+        "bootstrap-" + nodeId,
+        resolveBootstrapDeviceKey(nodeId)
     );
 
     Serial.printf("[PAIRING] POST %s\n", url.c_str());
@@ -1447,8 +1512,11 @@ void requestPairing() {
 
 bool sendTelemetry(
     float soilPercent,
+    bool soilValid,
+    const String& soilHealth,
     float distanceCm,
-    bool distanceValid
+    bool distanceValid,
+    const String& ultrasonicHealth
 ) {
     printSection("TELEMETRY TRANSMISSION");
 
@@ -1457,13 +1525,32 @@ bool sendTelemetry(
         return false;
     }
 
-    if (soilPercent < 0.0f) {
-        errorLog(
-            "Telemetry blocked: no usable soil measurement."
-        );
-        telemetryFailures++;
-        return false;
+    // Sanitize numeric values: failed sensors must always transmit 0.00 (never NaN/Inf/negative)
+    float safeSoilPercent = (soilValid && isfinite(soilPercent) && soilPercent >= 0.0f)
+        ? (soilPercent > 100.0f ? 100.0f : soilPercent)
+        : 0.0f;
+
+    float safeDistanceCm = (distanceValid && isfinite(distanceCm) && distanceCm >= MIN_DISTANCE_CM && distanceCm <= MAX_DISTANCE_CM)
+        ? distanceCm
+        : 0.0f;
+
+    float safeWaterLevelCm = 0.0f;
+    if (distanceValid && safeDistanceCm > 0.0f) {
+        float calculatedWaterLevel = SENSOR_DATUM_OFFSET_CM - safeDistanceCm;
+        if (isfinite(calculatedWaterLevel) && calculatedWaterLevel > 0.0f) {
+            safeWaterLevelCm = calculatedWaterLevel > 91.44f ? 91.44f : calculatedWaterLevel;
+        }
     }
+
+    String safeSoilHealth = soilValid ? "OK" : (soilHealth.length() > 0 ? soilHealth : "ERROR");
+    String safeUltrasonicHealth = distanceValid ? "OK" : (ultrasonicHealth.length() > 0 ? ultrasonicHealth : "TIMEOUT");
+    String telemetryStatus = (soilValid && distanceValid)
+        ? "OK"
+        : ((soilValid || distanceValid) ? "PARTIAL_FAILURE" : "SENSOR_FAILURE");
+
+    currentSoilHealth = safeSoilHealth;
+    currentUltrasonicHealth = safeUltrasonicHealth;
+    currentTelemetryStatus = telemetryStatus;
 
     isSendingTelemetry = true;
     updateLeds();
@@ -1502,34 +1589,39 @@ bool sendTelemetry(
 
     payload +=
         "\"soilMoisturePercent\":" +
-        String(soilPercent, 2) + ",";
+        String(safeSoilPercent, 2) + ",";
+    payload +=
+        "\"waterLevelCm\":" +
+        String(safeWaterLevelCm, 2) + ",";
+    payload +=
+        "\"telemetryStatus\":\"" + telemetryStatus + "\",";
+    payload +=
+        "\"sensorHealth\":{"
+        "\"soilMoisture\":\"" + safeSoilHealth + "\","
+        "\"ultrasonic\":\"" + safeUltrasonicHealth + "\""
+        "},";
 
     payload += "\"measurements\":{";
     payload +=
         "\"soil_moisture\":" +
-        String(soilPercent, 2);
-
-    if (distanceValid) {
-        payload +=
-            ",\"water_level_distance\":" +
-            String(distanceCm, 2);
-
-        float calculatedWaterLevel = SENSOR_DATUM_OFFSET_CM - distanceCm;
-        if (calculatedWaterLevel >= -30.0f && calculatedWaterLevel <= 30.0f) {
-            payload +=
-                ",\"waterLevelCm\":" +
-                String(calculatedWaterLevel, 2);
-        }
-    }
-
+        String(safeSoilPercent, 2) + ",";
+    payload +=
+        "\"water_level_distance\":" +
+        String(safeDistanceCm, 2) + ",";
+    payload +=
+        "\"water_level_cm\":" +
+        String(safeWaterLevelCm, 2);
     payload += "}}";
 
     // Attach operational HMAC credentials (ARVA-HMAC-V1)
     signAndAttachDeviceAuthHeaders(http, "POST", telemetryPath, payload);
 
     Serial.printf(
-        "[TELEMETRY] Sequence #%lu\n",
-        telemetrySequence
+        "[TELEMETRY] Sequence #%lu (status=%s, soil=%s, ultrasonic=%s)\n",
+        telemetrySequence,
+        telemetryStatus.c_str(),
+        safeSoilHealth.c_str(),
+        safeUltrasonicHealth.c_str()
     );
 
     Serial.printf(
@@ -1602,6 +1694,22 @@ bool sendTelemetry(
     return false;
 }
 
+bool sendTelemetry(
+    float soilPercent,
+    float distanceCm,
+    bool distanceValid
+) {
+    bool soilValid = isfinite(soilPercent) && soilPercent >= 0.0f;
+    return sendTelemetry(
+        soilValid ? soilPercent : 0.0f,
+        soilValid,
+        soilValid ? "OK" : "ERROR",
+        distanceValid ? distanceCm : 0.0f,
+        distanceValid,
+        distanceValid ? "OK" : "TIMEOUT"
+    );
+}
+
 // ============================================================
 // MONITORING CYCLE
 // ============================================================
@@ -1639,65 +1747,73 @@ void runMonitoringCycle() {
     info("Checking soil sensor response.");
 
     int soilADC = -1;
-    float soilPercent = -1.0f;
+    float soilPercent = 0.0f;
+    String soilHealth = "UNKNOWN";
 
     bool soilOk = checkSoilSensor(
         soilADC,
-        soilPercent
+        soilPercent,
+        soilHealth
     );
 
     info("Checking ultrasonic echo response.");
 
     float distanceCm = 0.0f;
+    String ultrasonicHealth = "UNKNOWN";
 
     bool distanceOk = readUltrasonicAverage(
-        distanceCm
+        distanceCm,
+        ultrasonicHealth
     );
+
+    if (!soilOk) {
+        soilPercent = 0.0f;
+    }
+    if (!distanceOk) {
+        distanceCm = 0.0f;
+    }
 
     printSection("SENSOR HEALTH SUMMARY");
 
     Serial.printf(
-        "[HEALTH] Soil sensor: %s\n",
-        soilOk ? "PASS" : "FAIL"
+        "[HEALTH] Soil sensor: %s (%s, value=%.2f%%)\n",
+        soilOk ? "PASS" : "FAIL",
+        soilHealth.c_str(),
+        soilPercent
     );
 
     Serial.printf(
-        "[HEALTH] Ultrasonic: %s\n",
-        distanceOk ? "PASS" : "FAIL"
+        "[HEALTH] Ultrasonic:  %s (%s, distance=%.2f cm)\n",
+        distanceOk ? "PASS" : "FAIL",
+        ultrasonicHealth.c_str(),
+        distanceCm
     );
 
     if (!soilOk) {
-        errorLog(
-            "Soil sensor failure detected; telemetry will "
-            "not report a fabricated soil measurement."
+        warning(
+            "Soil sensor failure (" + soilHealth + ") detected; transmitting numeric 0.00% with sensorHealth=" + soilHealth + "."
         );
     }
 
     if (!distanceOk) {
         warning(
-            "No valid ultrasonic distance. Telemetry will "
-            "omit ultrasonic measurements for this cycle."
+            "Ultrasonic sensor failure (" + ultrasonicHealth + ") detected; transmitting numeric 0.00 cm with sensorHealth=" + ultrasonicHealth + "."
         );
     }
 
-    if (soilOk) {
-        info("Sending valid soil measurement to backend.");
+    info("Transmitting telemetry payload to backend (3s interval policy).");
 
-        bool sent = sendTelemetry(
-            soilPercent,
-            distanceCm,
-            distanceOk
-        );
+    bool sent = sendTelemetry(
+        soilPercent,
+        soilOk,
+        soilHealth,
+        distanceCm,
+        distanceOk,
+        ultrasonicHealth
+    );
 
-        if (!sent) {
-            warning("Telemetry transmission failed.");
-        }
-    } else {
-        telemetryFailures++;
-        errorLog(
-            "Telemetry skipped because the soil reading "
-            "failed the electrical check."
-        );
+    if (!sent) {
+        warning("Telemetry transmission failed.");
     }
 
     printSection("CYCLE COMPLETE");
@@ -1812,7 +1928,7 @@ void handleActivationButton() {
 
             info(
                 "Monitoring active. First telemetry cycle "
-                "will run in 3 seconds (repeats every 1 second)."
+                "will run in 3 seconds (repeats every 3 seconds)."
             );
         }
     }
@@ -2034,7 +2150,7 @@ void setup() {
     Serial.println(F("[STATUS] Mode: STANDBY"));
     Serial.println(F("[STATUS] Monitoring: OFF"));
     Serial.println(F("[STATUS] Pairing button: disabled until activation"));
-    Serial.println(F("[STATUS] Telemetry interval: 1 second (initial: 3 seconds)"));
+    Serial.println(F("[STATUS] Telemetry interval: 3 seconds (initial: 3 seconds)"));
 
     Serial.println();
     Serial.println(F("1. Open Serial Monitor at 115200 baud."));
