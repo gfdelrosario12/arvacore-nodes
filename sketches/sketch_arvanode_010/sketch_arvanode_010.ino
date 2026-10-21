@@ -45,8 +45,8 @@
 // MANUAL WI-FI CONFIGURATION (EDIT DIRECTLY HERE)
 // Simple single-network connection — no fallback switching.
 // ============================================================
-const char* WIFI_SSID     = "ZTE_2.4G_5gKub";
-const char* WIFI_PASSWORD = "H0meDLR$2025";
+const char* WIFI_SSID     = "Cream";
+const char* WIFI_PASSWORD = "hatdog123";
 
 // ---------------- NETWORK & IDENTITY CONFIGURATION ----------
 
@@ -593,6 +593,23 @@ String computeHmacSha256Base64Url(const String& key, const String& data) {
     return base64UrlEncode(hmacResult, 32);
 }
 
+String resolveBootstrapDeviceKey(const String& id) {
+    if (strlen(BOOTSTRAP_DEVICE_KEY) > 0) {
+        return String(BOOTSTRAP_DEVICE_KEY);
+    }
+    if (id == "ARVANODE-001") return "dev_sec_e62959d17ffe8ad6f98246918bd61fa4e87b7b8963cf44cc15cb5c18";
+    if (id == "ARVANODE-002") return "dev_sec_67c3f4b5b6f18e4c9d5e7d0a03a1ef1da7d5aafc56dfe643e39083f5";
+    if (id == "ARVANODE-003") return "dev_sec_1efa16c86709da60e5766074b3f8c0b924b13df1de343e8b2233a13c";
+    if (id == "ARVANODE-004") return "dev_sec_64f495c247d9c387b82654402c239df12f3271456ab7f61e0ba81b1f";
+    if (id == "ARVANODE-005") return "dev_sec_28137003e478fdde0e3309cf818632c91c4942d5693042aa617ad783";
+    if (id == "ARVANODE-006") return "dev_sec_d6f2f0528826852eb61f4f4ffd9abc05883b4b87ec52a086623453e6";
+    if (id == "ARVANODE-007") return "dev_sec_7fd6eee6d715538406b2104103dcad259ae1ad583373c1485f1b3ead";
+    if (id == "ARVANODE-008") return "dev_sec_d19181c75649b99744dc47a9a74a60f0b55519c98b2ab4af290ee342";
+    if (id == "ARVANODE-009") return "dev_sec_ec64333bbf7cb13dcf86192a0fd30e8bfeb0e89db7a4d7adad4370d6";
+    if (id == "ARVANODE-010") return "dev_sec_a7465fd7d18dfcc1b1a45e4ee3548055b9c0b14a554111674c028a7f";
+    return "dev_sec_e62959d17ffe8ad6f98246918bd61fa4e87b7b8963cf44cc15cb5c18";
+}
+
 void signAndAttachDeviceAuthHeaders(
     HTTPClient& http,
     const String& method,
@@ -613,8 +630,8 @@ void signAndAttachDeviceAuthHeaders(
             keyId = storedOperationalKeyId;
             secret = storedOperationalSecret;
         } else {
-            keyId = "BOOTSTRAP-" + nodeId;
-            secret = BOOTSTRAP_DEVICE_KEY;
+            keyId = "bootstrap-" + nodeId;
+            secret = resolveBootstrapDeviceKey(nodeId);
         }
     }
 

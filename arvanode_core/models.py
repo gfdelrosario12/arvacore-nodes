@@ -21,6 +21,19 @@ class ConfigurationError(ValueError):
 NODE_ID_REGEX = re.compile(r"^ARVANODE-(00[1-9]|010|[0-9]{3,4})$")
 MAC_REGEX = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$")
 
+SEEDED_BOOTSTRAP_KEYS = {
+    "ARVANODE-001": "dev_sec_e62959d17ffe8ad6f98246918bd61fa4e87b7b8963cf44cc15cb5c18",
+    "ARVANODE-002": "dev_sec_67c3f4b5b6f18e4c9d5e7d0a03a1ef1da7d5aafc56dfe643e39083f5",
+    "ARVANODE-003": "dev_sec_1efa16c86709da60e5766074b3f8c0b924b13df1de343e8b2233a13c",
+    "ARVANODE-004": "dev_sec_64f495c247d9c387b82654402c239df12f3271456ab7f61e0ba81b1f",
+    "ARVANODE-005": "dev_sec_28137003e478fdde0e3309cf818632c91c4942d5693042aa617ad783",
+    "ARVANODE-006": "dev_sec_d6f2f0528826852eb61f4f4ffd9abc05883b4b87ec52a086623453e6",
+    "ARVANODE-007": "dev_sec_7fd6eee6d715538406b2104103dcad259ae1ad583373c1485f1b3ead",
+    "ARVANODE-008": "dev_sec_d19181c75649b99744dc47a9a74a60f0b55519c98b2ab4af290ee342",
+    "ARVANODE-009": "dev_sec_ec64333bbf7cb13dcf86192a0fd30e8bfeb0e89db7a4d7adad4370d6",
+    "ARVANODE-010": "dev_sec_a7465fd7d18dfcc1b1a45e4ee3548055b9c0b14a554111674c028a7f",
+}
+
 
 
 DEFAULT_PRIMARY_SSID = "ZTE_2.4G_5gKub"
@@ -145,6 +158,12 @@ class NodeConfig:
     sensor: SensorConfig = field(default_factory=SensorConfig)
     pinout: PinoutConfig = field(default_factory=PinoutConfig)
 
+    def __post_init__(self) -> None:
+        if not self.device_key or not self.device_key.strip():
+            default_key = SEEDED_BOOTSTRAP_KEYS.get(self.logical_node_id, "")
+            if default_key:
+                object.__setattr__(self, "device_key", default_key)
+
     def validate(self) -> None:
         if not self.logical_node_id or not self.logical_node_id.strip():
             raise ConfigurationError("logical_node_id cannot be empty.")
@@ -246,14 +265,19 @@ class NodeConfig:
             activation_led=int(pin_raw.get("activation_led", 26))
         )
 
+        logical_id = data.get("logical_node_id", "ARVANODE-001")
+        raw_device_key = data.get("device_key", "").strip()
+        if not raw_device_key:
+            raw_device_key = SEEDED_BOOTSTRAP_KEYS.get(logical_id, "")
+
         cfg = cls(
-            logical_node_id=data.get("logical_node_id", "ARVANODE-001"),
+            logical_node_id=logical_id,
             display_name=data.get("display_name", "ArvaNode Field 01"),
             hardware_model=data.get("hardware_model", "ESP32-WROOM-32"),
             hardware_revision=data.get("hardware_revision", "rev1"),
             firmware_version=data.get("firmware_version", "1.2.0"),
             build_id=data.get("build_id", f"bld-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"),
-            device_key=data.get("device_key", ""),
+            device_key=raw_device_key,
             hardware_mac=data.get("hardware_mac", ""),
             status=data.get("status", "GENERATED"),
             network=network,
@@ -273,7 +297,7 @@ class NodeConfig:
         return cls(
             logical_node_id=node_id,
             display_name=display_name,
-            device_key=f"dev_sec_default_{index:02d}",
+            device_key=SEEDED_BOOTSTRAP_KEYS.get(node_id, f"dev_sec_default_{index:02d}"),
             network=NetworkConfig(),
             sensor=SensorConfig(),
             pinout=PinoutConfig()

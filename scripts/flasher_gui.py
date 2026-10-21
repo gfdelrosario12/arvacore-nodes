@@ -488,9 +488,14 @@ class ArvaNodeFlasherApp(tk.Tk):
             soil_water_value=int(self.var_soil_water.get().strip() or 1500)
         )
 
+        node_id_val = self.var_node_id.get().strip() or "ARVANODE-001"
+        existing = self.repo.load_profile(node_id_val)
+        dev_key = existing.device_key if (existing and existing.device_key) else ""
+
         return NodeConfig(
-            logical_node_id=self.var_node_id.get().strip() or "ARVANODE-001",
+            logical_node_id=node_id_val,
             display_name=self.var_display_name.get().strip() or "ArvaNode",
+            device_key=dev_key,
             network=network,
             sensor=sensor
         )
