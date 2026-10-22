@@ -157,7 +157,7 @@ PairingState pairingState = PAIRING_APPROVED;
 
 bool isDevicePoweredOn = false;
 bool isPairedAndApproved = false;
-bool isMonitoringActive = true; isInitialTelemetryPending = true; activationTimestamp = millis();
+bool isMonitoringActive = false;
 bool isInitialTelemetryPending = false;
 unsigned long activationTimestamp = 0;
 
@@ -389,7 +389,7 @@ void applyPairingState(PairingState newState) {
             isPairedAndApproved = false;
             prefs.putBool("paired", false);
 
-            isMonitoringActive = true; isInitialTelemetryPending = true; activationTimestamp = millis();
+            isMonitoringActive = false;
             isInitialTelemetryPending = false;
             prefs.putBool("active", false);
             break;
@@ -399,7 +399,7 @@ void applyPairingState(PairingState newState) {
             isWaitingForPairing = false;
             prefs.putBool("paired", false);
 
-            isMonitoringActive = true; isInitialTelemetryPending = true; activationTimestamp = millis();
+            isMonitoringActive = false;
             isInitialTelemetryPending = false;
             prefs.putBool("active", false);
             break;
@@ -1867,7 +1867,7 @@ void runMonitoringCycle() {
             "could not be confirmed."
         );
 
-        isMonitoringActive = true; isInitialTelemetryPending = true; activationTimestamp = millis();
+        isMonitoringActive = false;
         isInitialTelemetryPending = false;
         prefs.putBool("active", false);
 
@@ -2003,7 +2003,7 @@ void handleActivationButton() {
             }
 
             if (isMonitoringActive) {
-                isMonitoringActive = true; isInitialTelemetryPending = true; activationTimestamp = millis();
+                isMonitoringActive = false;
                 isInitialTelemetryPending = false;
                 prefs.putBool("active", false);
 
@@ -2041,7 +2041,7 @@ void handleActivationButton() {
                     "checks failed."
                 );
 
-                isMonitoringActive = true; isInitialTelemetryPending = true; activationTimestamp = millis();
+                isMonitoringActive = false;
                 isInitialTelemetryPending = false;
                 prefs.putBool("active", false);
 
@@ -2201,7 +2201,9 @@ void setup() {
 
     // Restore approval and automatically resume monitoring after reboot.
     isDevicePoweredOn = true;
-    isMonitoringActive = true; isInitialTelemetryPending = true; activationTimestamp = millis();
+    isMonitoringActive = true;
+    isInitialTelemetryPending = true;
+    activationTimestamp = millis();
 
     pairingState = PAIRING_APPROVED;
     isPairedAndApproved = true; // Permanently provisioned fixed node
