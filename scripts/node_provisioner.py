@@ -29,6 +29,13 @@ PROFILES_DIR = PROVISIONING_DIR / "profiles"
 TEMPLATE_FILE = PROVISIONING_DIR / "profile_template.json"
 DEFAULT_SKETCH_HEADER = REPO_ROOT / "sketch_oct11a" / "node_config.h"
 
+# Import seeded keys from arvanode_core if available
+sys.path.insert(0, str(REPO_ROOT))
+try:
+    from arvanode_core.models import SEEDED_BOOTSTRAP_KEYS
+except ImportError:
+    SEEDED_BOOTSTRAP_KEYS = {}
+
 MAX_PROFILES = 10
 
 DEFAULT_PROFILES = [
@@ -190,7 +197,7 @@ class NodeProvisioner:
         profile["logical_node_id"] = node_id
         profile["display_name"] = display_name
         profile["hardware_mac"] = hardware_mac or ""
-        profile["device_key"] = f"dev_sec_{secrets.token_hex(28)}"
+        profile["device_key"] = SEEDED_BOOTSTRAP_KEYS.get(node_id) or f"dev_sec_{secrets.token_hex(28)}"
         profile["build_id"] = f"bld-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
         profile["status"] = "GENERATED"
         profile["metadata"]["created_at"] = now

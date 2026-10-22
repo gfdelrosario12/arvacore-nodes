@@ -116,6 +116,11 @@ unsigned long lastAuthRecheckMs = 0;
 unsigned long lastWifiRetryMs = 0;
 constexpr unsigned long PAIRING_WAIT_TIMEOUT_MS = 60000;
 
+// HTTP 401 backoff to avoid continuous request hammering on auth errors
+unsigned long lastAuthErrorMs = 0;
+unsigned long authErrorBackoffMs = 5000;
+constexpr unsigned long MAX_AUTH_BACKOFF_MS = 60000;
+
 constexpr uint8_t SOIL_SAMPLES = 4;
 constexpr uint8_t ULTRASONIC_SAMPLES = 3;
 
@@ -1222,6 +1227,20 @@ bool verifyBackendPairingStatus() {
         return false;
     }
 
+    if (httpCode == 401) {
+        lastAuthErrorMs = millis();
+        authErrorBackoffMs = min(authErrorBackoffMs * 2, MAX_AUTH_BACKOFF_MS);
+        errorLog(
+            String("Authentication rejected (HTTP 401: DEVICE_SIGNATURE_INVALID). Backing off for ") +
+            String(authErrorBackoffMs / 1000) + "s. Retaining credentials without re-pairing."
+        );
+        flashSystemError();
+        return false;
+    }
+
+    // Reset backoff on HTTP success or non-auth responses
+    authErrorBackoffMs = 5000;
+
     if (httpCode < 200 || httpCode >= 300) {
         errorLog(
             String("Status endpoint returned HTTP ") +
@@ -1458,6 +1477,18 @@ void requestPairing() {
             "[PAIRING] Response: %s\n",
             response.c_str()
         );
+    }
+
+    if (httpCode == 401) {
+        pairingFailures++;
+        lastAuthErrorMs = millis();
+        authErrorBackoffMs = min(authErrorBackoffMs * 2, MAX_AUTH_BACKOFF_MS);
+        errorLog(
+            String("Pairing submission rejected (HTTP 401: DEVICE_SIGNATURE_INVALID). Backing off for ") +
+            String(authErrorBackoffMs / 1000) + "s. Will not automatically duplicate request."
+        );
+        flashSystemError();
+        return;
     }
 
     if (httpCode < 200 || httpCode >= 300) {
@@ -2064,6 +2095,15 @@ void handlePairingButton() {
                 info("Already waiting for pairing approval. Checking status now...");
                 lastPairingPollMs = now;
                 verifyBackendPairingStatus();
+                return;
+            }
+
+            if (now - lastAuthErrorMs < authErrorBackoffMs) {
+                warning(
+                    String("Pairing request blocked: Authentication backoff active (") +
+                    String((authErrorBackoffMs - (now - lastAuthErrorMs)) / 1000) + "s remaining). Check device credentials."
+                );
+                flashSystemError();
                 return;
             }
 
