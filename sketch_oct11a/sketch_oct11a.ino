@@ -8,6 +8,9 @@
 #include "mbedtls/md.h"
 #include "mbedtls/sha256.h"
 #include <time.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
 
 // ============================================================
 // ARVACORE / ARVANODE SENSOR NODE FIRMWARE
@@ -18,8 +21,8 @@
 // GPIO 18: Ultrasonic ECHO (voltage divider required for 5V)
 // GPIO 19: Activation button (active LOW)
 // GPIO 23: Pairing button (active LOW)
-// GPIO 26: Activation / monitoring LED
-// GPIO 25: Pairing LED
+// GPIO 26: System LED (master, paired, errors)
+// GPIO 25: Sensor/telemetry activity LED
 //
 // DIAGNOSTICS:
 // - Checks actual Wi-Fi connectivity.
@@ -29,7 +32,7 @@
 // - Does not require a 20 cm minimum distance.
 // - Reports individual failures in Serial Monitor.
 // - Checks pairing authorization before telemetry.
-// - Telemetry interval: 15 minutes.
+// - Telemetry interval: 2 seconds.
 //
 // NOTE:
 // A stable soil reading is not automatically a failure.
@@ -236,76 +239,119 @@ const char* pairingStateName(PairingState state) {
 }
 
 // ============================================================
-// LED CONTROL
+// LED SIGNALS (non-blocking to HTTP/sensor code via FreeRTOS)
+// LED 1 GPIO26: master ON=3 flashes, pairing success=5 fast, error=1
+// LED 2 GPIO25: soil, ultrasonic, telemetry acknowledgement
 // ============================================================
+constexpr float ULTRA_CLOSE_CM = 10.0f;
+constexpr float ULTRA_MIDDLE_CM = 50.0f;
+constexpr float SOIL_DRY_PERCENT = 30.0f;
+constexpr float SOIL_WET_PERCENT = 70.0f;
+
+struct LedPattern {
+    uint8_t count;
+    uint16_t onMs;
+    uint16_t offMs;
+    uint16_t gapMs;
+};
+
+QueueHandle_t systemLedQueue = nullptr;
+QueueHandle_t activityLedQueue = nullptr;
+
+void ledTask(void* argument) {
+    const uint8_t pin = (uint8_t)(uintptr_t)argument;
+    QueueHandle_t queue = pin == LED_ACTIVATE ? systemLedQueue : activityLedQueue;
+    LedPattern pattern;
+    for (;;) {
+        if (xQueueReceive(queue, &pattern, portMAX_DELAY) == pdTRUE) {
+            for (uint8_t i = 0; i < pattern.count; ++i) {
+                digitalWrite(pin, HIGH);
+                vTaskDelay(pdMS_TO_TICKS(pattern.onMs));
+                digitalWrite(pin, LOW);
+                vTaskDelay(pdMS_TO_TICKS(pattern.offMs));
+            }
+            vTaskDelay(pdMS_TO_TICKS(pattern.gapMs));
+        }
+    }
+}
+
+void queuePattern(QueueHandle_t queue, uint8_t count,
+                  uint16_t onMs = 85, uint16_t offMs = 85,
+                  uint16_t gapMs = 160) {
+    if (!queue || !count) return;
+    LedPattern p = {count, onMs, offMs, gapMs};
+    // Keep freshest sensor indication if the queue ever backs up.
+    if (xQueueSend(queue, &p, 0) != pdTRUE) {
+        LedPattern stale;
+        xQueueReceive(queue, &stale, 0);
+        xQueueSend(queue, &p, 0);
+    }
+}
+
+void startLedController() {
+    systemLedQueue = xQueueCreate(16, sizeof(LedPattern));
+    activityLedQueue = xQueueCreate(32, sizeof(LedPattern));
+    if (!systemLedQueue || !activityLedQueue) {
+        Serial.println("[LED] Could not create LED queues");
+        return;
+    }
+    xTaskCreate(ledTask, "system-led", 2048,
+                (void*)(uintptr_t)LED_ACTIVATE, 1, nullptr);
+    xTaskCreate(ledTask, "activity-led", 2048,
+                (void*)(uintptr_t)LED_PAIRING, 1, nullptr);
+}
 
 void updateLeds() {
-    unsigned long now = millis();
-
-    // LED 1 (Activation): Blinks rapidly during active telemetry transmission;
-    // otherwise stays solid HIGH if monitoring is active, or LOW if off.
-    if (isSendingTelemetry) {
-        if (now - telemetryBlinkLastMs >= TELEMETRY_BLINK_INTERVAL_MS) {
-            telemetryBlinkLastMs = now;
-            telemetryBlinkState = !telemetryBlinkState;
-            digitalWrite(LED_ACTIVATE, telemetryBlinkState ? HIGH : LOW);
-        }
-    } else {
-        digitalWrite(
-            LED_ACTIVATE,
-            isMonitoringActive ? HIGH : LOW
-        );
-    }
-
-    // LED 2 (Pairing): Blinks while waiting for pairing approval (e.g. 500ms cycle);
-    // stays solid HIGH when approved, or LOW when unverified/rejected.
-    if (isWaitingForPairing) {
-        if (now - pairingBlinkLastMs >= 500) {
-            pairingBlinkLastMs = now;
-            pairingBlinkState = !pairingBlinkState;
-            digitalWrite(LED_PAIRING, pairingBlinkState ? HIGH : LOW);
-        }
-    } else {
-        digitalWrite(
-            LED_PAIRING,
-            isPairedAndApproved ? HIGH : LOW
-        );
-    }
+    // LEDs are normally OFF. Only the worker tasks control the pins.
 }
 
 void flashActivationLed(uint8_t count) {
-    Serial.printf(
-        "[LED 1] Flashing %u time(s), GPIO %u\n",
-        count, LED_ACTIVATE
-    );
-
-    for (uint8_t i = 0; i < count; i++) {
-        digitalWrite(LED_ACTIVATE, HIGH);
-        delay(250);
-        digitalWrite(LED_ACTIVATE, LOW);
-        delay(250);
-    }
-
-    updateLeds();
+    queuePattern(systemLedQueue, count, 120, 120, 220);
 }
 
+// Kept as a compatibility wrapper: pairing/error signals use LED 1.
 void flashPairingLed(uint8_t count) {
-    Serial.printf(
-        "[LED 2] Flashing %u time(s), GPIO %u\n",
-        count, LED_PAIRING
-    );
+    queuePattern(systemLedQueue, count == 1 ? 5 : 1,
+                 count == 1 ? 65 : 180,
+                 count == 1 ? 65 : 180, 220);
+}
 
-    for (uint8_t i = 0; i < count; i++) {
-        digitalWrite(LED_PAIRING, HIGH);
-        delay(250);
-        digitalWrite(LED_PAIRING, LOW);
-        delay(250);
+void flashSystemError() {
+    queuePattern(systemLedQueue, 1, 180, 180, 180);
+}
+
+void flashPairSuccess() {
+    queuePattern(systemLedQueue, 5, 65, 65, 220);
+}
+
+void flashSensorSuccess() {
+    // 1 brief flash on activity LED for successful telemetry transmission
+    queuePattern(activityLedQueue, 1, 85, 85, 160);
+}
+
+void flashSensorError() {
+    // 3 rapid flashes on activity LED for sensor or transmission error
+    queuePattern(activityLedQueue, 3, 70, 70, 160);
+}
+
+void flashSoilLevel(float percent, bool valid) {
+    if (!valid || !isfinite(percent) || percent <= 0.0f) {
+        flashSensorError();
     }
+}
 
-    updateLeds();
+void flashUltrasonicLevel(float distanceCm, bool valid) {
+    if (!valid || !isfinite(distanceCm) || distanceCm <= 0.0f) {
+        flashSensorError();
+    }
+}
+
+void flashTelemetrySent() {
+    flashSensorSuccess();
 }
 
 void applyPairingState(PairingState newState) {
+    bool newlyApproved = (newState == PAIRING_APPROVED && pairingState != PAIRING_APPROVED);
     pairingState = newState;
 
     switch (newState) {
@@ -341,6 +387,7 @@ void applyPairingState(PairingState newState) {
             break;
     }
 
+    if (newlyApproved) flashPairSuccess();
     updateLeds();
 
     Serial.printf(
@@ -391,6 +438,7 @@ bool connectWiFi() {
         return true;
     }
 
+    flashSystemError();
     errorLog(
         String("Wi-Fi connection failed for SSID '") + WIFI_SSID +
         "' (status: " + String((int)WiFi.status()) + ")."
@@ -782,7 +830,7 @@ bool provisionAndCompletePairing(long reqId) {
     isWaitingForPairing = false;
     prefs.putBool("paired", true);
     success("Node successfully provisioned, verified, and paired!");
-    flashPairingLed(1);
+    /* Success handled by applyPairingState transition. */
     return true;
 }
 
@@ -1348,7 +1396,7 @@ void requestPairing() {
     if (!connectWiFi()) {
         pairingFailures++;
         errorLog("Pairing request aborted: Wi-Fi unavailable.");
-        flashPairingLed(3);
+        flashSystemError();
         return;
     }
 
@@ -1361,7 +1409,7 @@ void requestPairing() {
     if (!beginSecureHttp(http, client, url)) {
         pairingFailures++;
         errorLog("Pairing HTTP initialization failed.");
-        flashPairingLed(3);
+        flashSystemError();
         return;
     }
 
@@ -1426,7 +1474,7 @@ void requestPairing() {
             );
         }
 
-        flashPairingLed(3);
+        flashSystemError();
         return;
     }
 
@@ -1458,7 +1506,7 @@ void requestPairing() {
         if (returnedNode != nodeId) {
             pairingFailures++;
             errorLog("Pairing response node ID mismatch.");
-            flashPairingLed(3);
+            flashSystemError();
             return;
         }
     }
@@ -1472,7 +1520,7 @@ void requestPairing() {
         prefs.putBool("paired", true);
 
         success("Automatic pairing recovery: Node is already active, authenticated, and paired in the backend.");
-        flashPairingLed(1);
+        /* Success handled by applyPairingState transition. */
         info("Press Activation to run the hardware audit and resume monitoring.");
         return;
     }
@@ -1482,10 +1530,10 @@ void requestPairing() {
         info("Pairing approved by administrator. Executing operational credential provisioning handshake...");
         if (provisionAndCompletePairing(storedPairingRequestId > 0 ? storedPairingRequestId : reqId)) {
             success("Operational provisioning completed successfully.");
-            flashPairingLed(1);
+            /* Success handled by applyPairingState transition. */
         } else {
             pairingFailures++;
-            flashPairingLed(3);
+            flashSystemError();
         }
         return;
     }
@@ -1510,7 +1558,7 @@ void requestPairing() {
         clearOperationalCredentials();
 
         errorLog("Backend rejected, revoked, or expired pairing.");
-        flashPairingLed(3);
+        flashSystemError();
         return;
     }
 
@@ -1521,7 +1569,7 @@ void requestPairing() {
         String("Unknown pairing response status: ") + status
     );
 
-    flashPairingLed(3);
+    flashSystemError();
 }
 
 // ============================================================
@@ -1684,6 +1732,7 @@ bool sendTelemetry(
 
     if (httpCode >= 200 && httpCode < 300) {
         telemetrySuccesses++;
+        flashTelemetrySent();
 
         success(
             String("Telemetry accepted. Sequence #") +
@@ -1694,6 +1743,7 @@ bool sendTelemetry(
     }
 
     telemetryFailures++;
+    flashSensorError();
 
     errorLog(
         String("Telemetry rejected or failed. HTTP ") +
@@ -1705,7 +1755,7 @@ bool sendTelemetry(
         warning("Node has been revoked or unpaired by backend. Clearing pairing state and operational credentials.");
         clearOperationalCredentials();
         applyPairingState(PAIRING_REJECTED);
-        flashPairingLed(3);
+        flashSystemError();
     }
 
     if (httpCode < 0) {
@@ -1767,7 +1817,7 @@ void runMonitoringCycle() {
         isInitialTelemetryPending = false;
         prefs.putBool("active", false);
 
-        flashActivationLed(3);
+        flashSystemError();
         updateLeds();
         return;
     }
@@ -1801,6 +1851,10 @@ void runMonitoringCycle() {
         distanceCm = 0.0f;
     }
 
+    // Report both measurements, with 4 flashes for error/zero.
+    flashSoilLevel(soilPercent, soilOk);
+    flashUltrasonicLevel(distanceCm, distanceOk);
+
     printSection("SENSOR HEALTH SUMMARY");
 
     Serial.printf(
@@ -1829,7 +1883,7 @@ void runMonitoringCycle() {
         );
     }
 
-    info("Transmitting telemetry payload to backend (3s interval policy).");
+    info("Transmitting telemetry payload to backend (2s interval policy).");
 
     bool sent = sendTelemetry(
         soilPercent,
@@ -1886,6 +1940,7 @@ void handleActivationButton() {
 
             if (!isDevicePoweredOn) {
                 isDevicePoweredOn = true;
+                flashActivationLed(3);  // Master ON: exactly three flashes
 
                 success(
                     "Device logically activated. "
@@ -1914,7 +1969,7 @@ void handleActivationButton() {
                     "as approved."
                 );
 
-                flashActivationLed(3);
+                flashSystemError();
 
                 info(
                     "If necessary, press GPIO 23 to request pairing."
@@ -1936,7 +1991,7 @@ void handleActivationButton() {
                 isInitialTelemetryPending = false;
                 prefs.putBool("active", false);
 
-                flashActivationLed(3);
+                flashSystemError();
                 updateLeds();
                 return;
             }
@@ -1944,8 +1999,6 @@ void handleActivationButton() {
             success(
                 "Activation passed: pairing and hardware checks OK."
             );
-
-            flashActivationLed(1);
 
             isMonitoringActive = true;
             isInitialTelemetryPending = true;
@@ -1956,7 +2009,7 @@ void handleActivationButton() {
 
             info(
                 "Monitoring active. First telemetry cycle "
-                "will run in 3 seconds (repeats every 3 seconds)."
+                "will run in 2 seconds (repeats every 2 seconds)."
             );
         }
     }
@@ -2001,7 +2054,7 @@ void handlePairingButton() {
                 info("Device marked paired locally. Verifying with backend...");
                 if (verifyBackendPairingStatus()) {
                     info("Backend confirms device is already active and paired.");
-                    flashPairingLed(1);
+                    /* Success handled by applyPairingState transition. */
                     return;
                 }
                 info("Backend indicates pairing update required. Submitting request...");
@@ -2050,6 +2103,7 @@ void setup() {
 
     digitalWrite(LED_PAIRING, LOW);
     digitalWrite(LED_ACTIVATE, LOW);
+    startLedController();
 
     pinMode(TRIG_PIN, OUTPUT);
     pinMode(ECHO_PIN, INPUT);
@@ -2069,8 +2123,8 @@ void setup() {
     Serial.println(F("GPIO 18: Ultrasonic ECHO"));
     Serial.println(F("GPIO 19: Activation button"));
     Serial.println(F("GPIO 23: Pairing button"));
-    Serial.println(F("GPIO 25: Pairing LED"));
-    Serial.println(F("GPIO 26: Activation LED"));
+    Serial.println(F("GPIO 25: Sensor / telemetry activity LED"));
+    Serial.println(F("GPIO 26: System / pairing / error LED"));
 
     printSection("PREFERENCES STORAGE");
 
@@ -2207,7 +2261,7 @@ void setup() {
     Serial.println(F("[STATUS] Mode: STANDBY"));
     Serial.println(F("[STATUS] Monitoring: OFF"));
     Serial.println(F("[STATUS] Pairing button: disabled until activation"));
-    Serial.println(F("[STATUS] Telemetry interval: 3 seconds (initial: 3 seconds)"));
+    Serial.println(F("[STATUS] Telemetry interval: 2 seconds (initial: 2 seconds)"));
 
     Serial.println();
     Serial.println(F("1. Open Serial Monitor at 115200 baud."));
@@ -2233,13 +2287,13 @@ void loop() {
         if (now - pairingWaitStartMs >= PAIRING_WAIT_TIMEOUT_MS) {
             isWaitingForPairing = false;
             warning("Pairing wait timeout reached (60s). Press GPIO 23 to retry.");
-            flashPairingLed(3);
+            flashSystemError();
         } else if (now - lastPairingPollMs >= PAIRING_POLL_INTERVAL_MS) {
             lastPairingPollMs = now;
             info("Checking pairing authorization status...");
             if (verifyBackendPairingStatus()) {
                 info("Pairing approved! Press GPIO 19 to activate monitoring.");
-                flashPairingLed(1);
+                /* Success handled by applyPairingState transition. */
             }
         }
     }
@@ -2256,7 +2310,7 @@ void loop() {
             if (now - activationTimestamp >= INITIAL_TELEMETRY_DELAY_MS) {
                 isInitialTelemetryPending = false;
                 lastTransmissionTime = now;
-                info("Initial activation timer elapsed (3s). Triggering telemetry.");
+                info("Initial activation timer elapsed (2s). Triggering telemetry.");
                 runMonitoringCycle();
             }
         } else if (now - lastTransmissionTime >= TELEMETRY_INTERVAL_MS) {
