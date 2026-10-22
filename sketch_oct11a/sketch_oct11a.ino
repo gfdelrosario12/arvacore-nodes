@@ -116,8 +116,8 @@ unsigned long lastAuthRecheckMs = 0;
 unsigned long lastWifiRetryMs = 0;
 constexpr unsigned long PAIRING_WAIT_TIMEOUT_MS = 60000;
 
-constexpr uint8_t SOIL_SAMPLES = 10;
-constexpr uint8_t ULTRASONIC_SAMPLES = 5;
+constexpr uint8_t SOIL_SAMPLES = 4;
+constexpr uint8_t ULTRASONIC_SAMPLES = 3;
 
 constexpr unsigned long ECHO_TIMEOUT_US = 30000;
 
@@ -854,7 +854,7 @@ int readSoilADC() {
 
     // Discard the first conversion after selecting the channel.
     analogRead(SOIL_PIN);
-    delay(5);
+    delayMicroseconds(200);
 
     for (uint8_t i = 0; i < SOIL_SAMPLES; i++) {
         int value = analogRead(SOIL_PIN);
@@ -868,7 +868,7 @@ int readSoilADC() {
             validSamples++;
         }
 
-        delay(20);
+        delayMicroseconds(500);
     }
 
     if (validSamples == 0) {
@@ -1081,7 +1081,7 @@ bool readUltrasonicAverage(float& result, String& healthStatus) {
             );
         }
 
-        delay(60);
+        delayMicroseconds(2000);
     }
 
     Serial.printf(
@@ -2321,6 +2321,4 @@ void loop() {
 
     // Continuously service LED state changes and non-blocking blinking
     updateLeds();
-
-    delay(2);
 }
