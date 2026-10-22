@@ -107,6 +107,10 @@ constexpr unsigned long INITIAL_TELEMETRY_DELAY_MS =
     3UL * 1000UL;
 constexpr unsigned long TELEMETRY_BLINK_INTERVAL_MS = 100;
 constexpr unsigned long PAIRING_POLL_INTERVAL_MS = 5000;
+constexpr unsigned long AUTH_RECHECK_MS = 60000;
+constexpr unsigned long WIFI_RETRY_MS = 10000;
+unsigned long lastAuthRecheckMs = 0;
+unsigned long lastWifiRetryMs = 0;
 constexpr unsigned long PAIRING_WAIT_TIMEOUT_MS = 60000;
 
 constexpr uint8_t SOIL_SAMPLES = 10;
@@ -1520,8 +1524,8 @@ bool sendTelemetry(
 ) {
     printSection("TELEMETRY TRANSMISSION");
 
-    if (!isMonitoringActive) {
-        warning("Telemetry blocked: monitoring is inactive.");
+    if (!isMonitoringActive || !isPairedAndApproved) {
+        warning("Telemetry blocked: monitoring inactive or node unpaired.");
         return false;
     }
 
@@ -1677,8 +1681,8 @@ bool sendTelemetry(
         String(httpCode)
     );
 
-    if (httpCode == 401 || httpCode == 403 ||
-        (httpCode == 400 && (response.indexOf("NODE_NOT_ACTIVE") >= 0 || response.indexOf("REVOKED") >= 0 || response.indexOf("UNREGISTERED") >= 0))) {
+    if ((httpCode == 401 || httpCode == 403 || httpCode == 400) &&
+        (response.indexOf("REVOKED") >= 0 || response.indexOf("UNREGISTERED") >= 0 || response.indexOf("EXPIRED") >= 0)) {
         warning("Node has been revoked or unpaired by backend. Clearing pairing state and operational credentials.");
         clearOperationalCredentials();
         applyPairingState(PAIRING_REJECTED);
@@ -1727,9 +1731,14 @@ void runMonitoringCycle() {
         nodeId.c_str()
     );
 
-    info("Checking current backend authorization.");
+    // Revalidate periodically, not on every telemetry cycle.
+    // Transient backend failures must not erase valid locally stored pairing.
+    if (millis() - lastAuthRecheckMs >= AUTH_RECHECK_MS) {
+        lastAuthRecheckMs = millis();
+        verifyBackendPairingStatus();
+    }
 
-    if (!verifyBackendPairingStatus()) {
+    if (!isPairedAndApproved) {
         errorLog(
             "Monitoring stopped: current pairing authorization "
             "could not be confirmed."
@@ -1965,6 +1974,10 @@ void handlePairingButton() {
                 return;
             }
 
+            if (isPairedAndApproved && storedOperationalKeyId.length() && storedOperationalSecret.length()) {
+                info("Device already paired. No new pairing request necessary.");
+                return;
+            }
             if (isPairedAndApproved) {
                 info("Device marked paired locally. Verifying with backend...");
                 if (verifyBackendPairingStatus()) {
@@ -2051,8 +2064,8 @@ void setup() {
         }
     }
 
-    // Start in standby regardless of previously stored state.
-    isDevicePoweredOn = false;
+    // Restore approval and automatically resume monitoring after reboot.
+    isDevicePoweredOn = true;
     isMonitoringActive = false;
 
     pairingState = PAIRING_UNVERIFIED;
@@ -2063,8 +2076,6 @@ void setup() {
     if (isPairedAndApproved) {
         pairingState = PAIRING_APPROVED;
     }
-
-    prefs.putBool("active", false);
 
     printSection("NODE IDENTITY");
 
@@ -2132,6 +2143,16 @@ void setup() {
 
     printSection("INITIAL WI-FI CONNECTION");
     connectWiFi();
+    if (isPairedAndApproved && storedOperationalKeyId.length() && storedOperationalSecret.length()) {
+        isMonitoringActive = true;
+        isInitialTelemetryPending = true;
+        activationTimestamp = millis();
+        success("Restored pairing and started automatic monitoring.");
+    } else if (isPairedAndApproved) {
+        warning("Local pairing flag has no operational credentials; authorization recovery required.");
+        isPairedAndApproved = false;
+        pairingState = PAIRING_UNVERIFIED;
+    }
 
     printSection("BUTTON INITIALIZATION");
 
@@ -2185,6 +2206,12 @@ void loop() {
                 flashPairingLed(1);
             }
         }
+    }
+
+    // Retry Wi-Fi independently of sensor failures.
+    if (WiFi.status() != WL_CONNECTED && now - lastWifiRetryMs >= WIFI_RETRY_MS) {
+        lastWifiRetryMs = now;
+        WiFi.reconnect();
     }
 
     // Telemetry cycle timing
