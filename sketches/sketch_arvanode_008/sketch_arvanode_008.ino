@@ -712,17 +712,15 @@ bool provisionAndCompletePairing(long reqId) {
         return false;
     }
 
-    String opKeyId, opSecret, provToken;
+    String opKeyId, opSecret;
     if (!extractJsonString(response, "operationalKeyId", opKeyId) ||
-        !extractJsonString(response, "operationalSecret", opSecret) ||
-        !extractJsonString(response, "provisioningToken", provToken)) {
+        !extractJsonString(response, "operationalSecret", opSecret)) {
         errorLog("Provisioning response missing required credential fields.");
         return false;
     }
 
     opKeyId.trim();
     opSecret.trim();
-    provToken.trim();
 
     info("Provisioning credentials received. Storing to non-volatile preferences...");
     storedOperationalKeyId = opKeyId;
@@ -747,7 +745,7 @@ bool provisionAndCompletePairing(long reqId) {
     completeHttp.addHeader("Content-Type", "application/json");
     completeHttp.addHeader("Accept", "application/json");
 
-    String completePayload = "{\"provisioningToken\":\"" + provToken + "\"}";
+    String completePayload = "{\"operationalKeyId\":\"" + storedOperationalKeyId + "\"}";
 
     // Sign with new OPERATIONAL key!
     signAndAttachDeviceAuthHeaders(
