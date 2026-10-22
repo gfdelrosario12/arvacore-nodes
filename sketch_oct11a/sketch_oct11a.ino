@@ -505,19 +505,21 @@ bool extractJsonBool(const String& body, const char* key, bool& output) {
 // DEVICE AUTHENTICATION & HMAC CONTRACT (ARVA-HMAC-V1)
 // ============================================================
 
-void syncDeviceTime() {
+bool syncDeviceTime() {
     info("Synchronizing device time via SNTP...");
     configTime(0, 0, "pool.ntp.org", "time.google.com", "time.nist.gov");
     time_t now = time(nullptr);
     unsigned long start = millis();
-    while (now < 1700000000 && (millis() - start < 6000)) {
+    while (now < 1700000000 && (millis() - start < 8000)) {
         delay(250);
         now = time(nullptr);
     }
     if (now >= 1700000000) {
         Serial.printf("[NTP] Device time synchronized: epoch %ld\n", (long)now);
+        return true;
     } else {
         warning("SNTP time synchronization pending or timed out; will retry on next connection.");
+        return false;
     }
 }
 
@@ -626,6 +628,10 @@ void signAndAttachDeviceAuthHeaders(
     const String& customKeyId = "",
     const String& customSecret = ""
 ) {
+    if (time(nullptr) < 1700000000) {
+        warning("[DEVICE-AUTH] Clock skew detected before signing; resynchronizing NTP...");
+        syncDeviceTime();
+    }
     time_t nowSec = time(nullptr);
     String timestamp = String((long)nowSec);
     String nonce = String(esp_random(), HEX) + String(millis(), HEX);
@@ -1124,6 +1130,21 @@ bool verifyBackendPairingStatus() {
         httpCode < 0 ? http.errorToString(httpCode) : "";
 
     http.end();
+
+    // RETRY ON DEVICE_CLOCK_SKEW: resynchronize time and retry once
+    if (httpCode == 401 && response.indexOf("DEVICE_CLOCK_SKEW") >= 0) {
+        warning("[PAIRING CHECK] Clock skew 401 received; resynchronizing NTP and retrying request...");
+        syncDeviceTime();
+        if (beginSecureHttp(http, client, url)) {
+            http.addHeader("Accept", "application/json");
+            signAndAttachDeviceAuthHeaders(http, "GET", path, "");
+            httpCode = http.GET();
+            response = httpCode > 0 ? http.getString() : "";
+            transportError = httpCode < 0 ? http.errorToString(httpCode) : "";
+            http.end();
+            Serial.printf("[PAIRING CHECK RETRY] HTTP status: %d\n", httpCode);
+        }
+    }
 
     Serial.printf(
         "[PAIRING CHECK] HTTP status: %d\n",
@@ -2141,15 +2162,32 @@ void setup() {
 
     printSection("INITIAL WI-FI CONNECTION");
     connectWiFi();
-    if (isPairedAndApproved && storedOperationalKeyId.length() && storedOperationalSecret.length()) {
-        isMonitoringActive = true;
-        isInitialTelemetryPending = true;
-        activationTimestamp = millis();
-        success("Restored pairing and started automatic monitoring.");
+    if (WiFi.status() == WL_CONNECTED) {
+        syncDeviceTime();
+    }
+
+    if (isPairedAndApproved && storedOperationalKeyId.length() > 0 && storedOperationalSecret.length() > 0) {
+        info("[STARTUP] Checking backend authorization with stored operational credentials...");
+        bool authorized = verifyBackendPairingStatus();
+        if (authorized) {
+            isMonitoringActive = true;
+            isInitialTelemetryPending = true;
+            activationTimestamp = millis();
+            success("[STARTUP] Backend authorization confirmed. Resumed automatic monitoring and telemetry.");
+        } else {
+            // Temporary connection issue or pending backend confirmation: do NOT wipe credentials
+            warning("[STARTUP] Backend status check returned unverified. Retaining operational credentials and resuming monitoring.");
+            isMonitoringActive = true;
+            isInitialTelemetryPending = true;
+            activationTimestamp = millis();
+        }
     } else if (isPairedAndApproved) {
-        warning("Local pairing flag has no operational credentials; authorization recovery required.");
-        isPairedAndApproved = false;
-        pairingState = PAIRING_UNVERIFIED;
+        warning("[STARTUP] Local pairing flag present without full credentials; checking backend authorization recovery...");
+        if (verifyBackendPairingStatus()) {
+            isMonitoringActive = true;
+            isInitialTelemetryPending = true;
+            activationTimestamp = millis();
+        }
     }
 
     printSection("BUTTON INITIALIZATION");
