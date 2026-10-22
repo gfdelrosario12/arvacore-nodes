@@ -102,9 +102,9 @@ constexpr unsigned long WIFI_TIMEOUT_MS = 10000;
 constexpr unsigned long HTTP_TIMEOUT_MS = 10000;
 
 constexpr unsigned long TELEMETRY_INTERVAL_MS =
-    3UL * 1000UL;
+    2UL * 1000UL;
 constexpr unsigned long INITIAL_TELEMETRY_DELAY_MS =
-    3UL * 1000UL;
+    2UL * 1000UL;
 constexpr unsigned long TELEMETRY_BLINK_INTERVAL_MS = 100;
 constexpr unsigned long PAIRING_POLL_INTERVAL_MS = 5000;
 constexpr unsigned long AUTH_RECHECK_MS = 60000;

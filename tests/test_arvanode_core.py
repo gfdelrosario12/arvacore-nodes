@@ -31,7 +31,7 @@ class TestArvaNodeModels(unittest.TestCase):
         config = NodeConfig.from_default(1)
         self.assertEqual(config.logical_node_id, "ARVANODE-001")
         self.assertEqual(config.display_name, "ArvaNode Field 01")
-        self.assertEqual(config.sensor.telemetry_interval_ms, 3000)
+        self.assertEqual(config.sensor.telemetry_interval_ms, 2000)
         # Verify standardized primary and fallback Wi-Fi networks
         self.assertEqual(config.network.primary_ssid, "ArvaLink-2")
         self.assertEqual(config.network.primary_password, "ARVaLINK2_2026")
@@ -75,7 +75,7 @@ class TestArvaNodeModels(unittest.TestCase):
             max_distance_cm=450.0,
             soil_air_value=3100,
             soil_water_value=1500,
-            telemetry_interval_ms=3000
+            telemetry_interval_ms=2000
         )
         custom_config = NodeConfig(
             logical_node_id=config.logical_node_id,
@@ -96,11 +96,11 @@ class TestArvaNodeModels(unittest.TestCase):
             config.validate()
 
     def test_telemetry_interval_invariant(self):
-        bad_sensor = SensorConfig(telemetry_interval_ms=1000)  # Must be 3000
+        bad_sensor = SensorConfig(telemetry_interval_ms=1000)  # Must be 2000
         config = NodeConfig(sensor=bad_sensor)
         with self.assertRaises(ConfigurationError) as ctx:
             config.validate()
-        self.assertIn("telemetry_interval_ms must be exactly 3000", str(ctx.exception))
+        self.assertIn("telemetry_interval_ms must be exactly 2000", str(ctx.exception))
 
     def test_invalid_soil_calibration(self):
         bad_sensor = SensorConfig(soil_air_value=1000, soil_water_value=2000)  # air must be strictly > water
@@ -171,7 +171,7 @@ class TestBuildService(unittest.TestCase):
         self.assertIn('#define NODE_PRIMARY_WIFI_PASS "ARVaLINK2_2026"', content)
         self.assertIn('#define NODE_FALLBACK_WIFI_SSID "ArvaLink-1"', content)
         self.assertIn('#define NODE_FALLBACK_WIFI_PASS "ARVaLINK1_2026"', content)
-        self.assertIn("#define NODE_TELEMETRY_INTERVAL_MS 3000UL", content)
+        self.assertIn("#define NODE_TELEMETRY_INTERVAL_MS 2000UL", content)
         self.assertIn("#define ARVA_CONFIG_INJECTED 1", content)
 
 

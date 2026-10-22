@@ -153,7 +153,7 @@ class Esp32Flasher:
             raise FileNotFoundError(f"Provisioning profile '{node_id}' does not exist.")
 
         # Ensure valid profile
-        if profile.get("sensor_config", {}).get("telemetry_interval_ms") != 3000:
+        if profile.get("sensor_config", {}).get("telemetry_interval_ms") != 2000:
             raise ValueError(f"Profile '{node_id}' violates invariant: telemetry interval must be 3000ms.")
 
         if export_header:

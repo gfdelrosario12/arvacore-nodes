@@ -104,7 +104,7 @@ class NodeProvisioner:
                 "max_distance_cm": 450.0,
                 "soil_air_value": 3200,
                 "soil_water_value": 1500,
-                "telemetry_interval_ms": 3000
+                "telemetry_interval_ms": 2000
             },
             "pinout": {
                 "soil_moisture_analog": 34,
@@ -290,8 +290,8 @@ class NodeProvisioner:
 
             sensor = p.get("sensor_config", {})
             interval = sensor.get("telemetry_interval_ms", 0)
-            if interval != 3000:
-                errors.append(f"Profile '{node_id}' telemetry_interval_ms is {interval}; must be strictly 3000ms.")
+            if interval != 2000:
+                errors.append(f"Profile '{node_id}' telemetry_interval_ms is {interval}; must be strictly 2000ms.")
 
             pinout = p.get("pinout", {})
             required_pins = {
@@ -358,7 +358,7 @@ class NodeProvisioner:
 #define NODE_MAX_DISTANCE_CM {sensor.get('max_distance_cm', 450.0):.2f}f
 #define NODE_SOIL_AIR_VALUE {sensor.get('soil_air_value', 3200)}
 #define NODE_SOIL_WATER_VALUE {sensor.get('soil_water_value', 1500)}
-#define NODE_TELEMETRY_INTERVAL_MS {sensor.get('telemetry_interval_ms', 3000)}UL
+#define NODE_TELEMETRY_INTERVAL_MS {sensor.get('telemetry_interval_ms', 2000)}UL
 
 // Hardware Pinout
 #define PIN_SOIL_ANALOG {pinout.get('soil_moisture_analog', 34)}

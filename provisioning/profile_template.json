@@ -39,7 +39,7 @@
     "max_distance_cm": 450.0,
     "soil_air_value": 3200,
     "soil_water_value": 1500,
-    "telemetry_interval_ms": 3000
+    "telemetry_interval_ms": 2000
   },
   "pinout": {
     "soil_moisture_analog": 34,

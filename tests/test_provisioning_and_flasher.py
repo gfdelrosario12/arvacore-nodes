@@ -126,7 +126,7 @@ class TestNodeProvisioner(unittest.TestCase):
         content = exported.read_text()
         self.assertIn('#define ARVA_CONFIG_INJECTED 1', content)
         self.assertIn('#define NODE_LOGICAL_ID "ARVANODE-003"', content)
-        self.assertIn('#define NODE_TELEMETRY_INTERVAL_MS 3000UL', content)
+        self.assertIn('#define NODE_TELEMETRY_INTERVAL_MS 2000UL', content)
         self.assertIn('#define PIN_SOIL_ANALOG 34', content)
         self.assertIn('#define PIN_ULTRASONIC_TRIG 5', content)
         self.assertIn('#define PIN_ULTRASONIC_ECHO 18', content)

@@ -116,16 +116,16 @@ class SensorConfig:
     max_distance_cm: float = 450.0
     soil_air_value: int = 3200
     soil_water_value: int = 1500
-    telemetry_interval_ms: int = 3000
+    telemetry_interval_ms: int = 2000
 
     def validate(self) -> None:
         if self.min_distance_cm >= self.max_distance_cm:
             raise ConfigurationError(f"min_distance_cm ({self.min_distance_cm}) must be less than max_distance_cm ({self.max_distance_cm}).")
         if self.soil_water_value >= self.soil_air_value:
             raise ConfigurationError(f"soil_water_value ({self.soil_water_value}) must be less than soil_air_value ({self.soil_air_value}).")
-        if self.telemetry_interval_ms != 3000:
+        if self.telemetry_interval_ms != 2000:
             raise ConfigurationError(
-                f"telemetry_interval_ms must be exactly 3000 ms per production system invariant (got {self.telemetry_interval_ms})."
+                f"telemetry_interval_ms must be exactly 2000 ms per production system invariant (got {self.telemetry_interval_ms})."
             )
 
 
