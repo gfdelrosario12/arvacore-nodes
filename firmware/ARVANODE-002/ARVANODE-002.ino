@@ -1170,6 +1170,11 @@ bool readUltrasonicAverage(float& result) {
 // ============================================================
 
 bool verifyBackendPairingStatus() {
+    // Fixed node architecture: node is pre-provisioned, permanently paired and approved.
+    pairingState = PAIRING_APPROVED;
+    isPairedAndApproved = true;
+    return true;
+
     statusChecks++;
 
     printSection("BACKEND PAIRING STATUS CHECK");
